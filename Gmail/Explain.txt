@@ -1,0 +1,9 @@
+token.pickle is just a local file that stores your OAuth credentials (access token + refresh token) after you authenticate the first time.
+
+Here's what happens:
+
+    1. First run: no token.pickle exists yet, so the script opens a browser, you log into your Google account and grant permission, and Google hands back a token.
+    
+    2. That token gets saved to token.pickle on disk (in whatever folder you run the script from) using Python's pickle module — it serializes the Credentials object (access token, refresh token, expiry, scopes, etc.) into a binary file.
+    
+    3. Every subsequent run: the script loads token.pickle, checks if the access token is expired, and if so uses the refresh token to silently get a new one — no browser popup needed again.
