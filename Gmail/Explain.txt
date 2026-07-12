@@ -7,3 +7,44 @@ Here's what happens:
     2. That token gets saved to token.pickle on disk (in whatever folder you run the script from) using Python's pickle module — it serializes the Credentials object (access token, refresh token, expiry, scopes, etc.) into a binary file.
     
     3. Every subsequent run: the script loads token.pickle, checks if the access token is expired, and if so uses the refresh token to silently get a new one — no browser popup needed again.
+
+
+The OAuth consent screen is the config page in Google Cloud Console where you define how your app presents itself to users during that consent step. Here's what it actually controls:
+What you configure there
+
+    1. User type
+        Internal — only for Google Workspace orgs, restricted to your organization's users. Not relevant for you (personal Gmail).
+        External — anyone with a Google account can potentially use it. This is what you're on.
+
+    2. App information
+        App name (shown on the consent screen: "X wants to access your Google Account")
+        User support email
+        App logo (optional in testing, required for verification)
+        App domain, privacy policy URL, terms of service URL (required once you try to publish/verify)
+
+    3. Scopes
+        The exact permissions you're requesting — gmail.readonly, gmail.send, gmail.modify, etc.
+        Google buckets these into sensitive and restricted tiers. Gmail scopes are mostly restricted, which is why verification is heavier for this API specifically.
+        Users see a plain-language description of each scope on the actual consent popup (e.g. "Read, compose, and send emails from your Gmail account").
+
+    4. Test users
+        Only visible/relevant while your app is in Testing publish status
+        Up to 100 emails you manually whitelist — only these accounts can complete the consent flow at all
+        Anyone not on this list gets blocked before they even see the permission screen
+
+    5. Publishing status
+        Testing → refresh tokens expire after 7 days, capped at 100 test users, no verification needed
+        In production → no user cap, refresh tokens don't auto-expire, but restricted scopes trigger Google's verification review (privacy policy check, security assessment for restricted scopes, sometimes a demo video walkthrough)
+
+
+Walking through it step by step
+
+    1. Your app identity is fixed and public-ish. client_id + client_secret in credentials.json just say "this request claims to be Faizan's app." It's the same for every user — it never changes per person.
+    
+    2. Each user consents individually. When User A clicks "Sign in with Google" in your app, their browser goes to Google, they log into their own Gmail, and they see a screen listing exactly what your app wants (read email, send email, etc.). If they say yes, Google issues a token — but that token belongs to User A's account, not yours.
+    
+    3. The token is the actual access. Whoever holds a given token can act as that Gmail account, within the scopes granted. Your app never sees User A's password — just a token scoped to what they approved.
+    
+    4. You store tokens per user, not one global token. This is the part that changes from your current single-user script. Right now you have one token.pickle because there's one user (you). For multi-user, you need a lookup: given a user_id, fetch that user's token from a database, use it to build the Gmail service for that request, and never mix rows.
+    
+    5. Calling the API becomes "which user am I acting as right now." Every API call is scoped to whichever token you loaded — same credentials.json app identity in the background, but a completely separate Gmail account depending on which user's row you pulled.

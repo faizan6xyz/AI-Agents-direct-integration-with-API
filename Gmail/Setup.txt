@@ -1,0 +1,10 @@
+Set up credentials :
+
+    1. Go to Google Cloud Console → create/select a project
+    2. Enable Gmail API (APIs & Services → Library)
+    3. Configure OAuth consent screen (External, add your Gmail as a test user)
+    4. Create OAuth client ID credentials (Desktop app type) → download credentials.json
+
+dependencies : 
+
+    pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client
