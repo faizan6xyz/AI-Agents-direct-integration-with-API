@@ -45,13 +45,15 @@ def download_file(media_id: str, save_path: str):
     return save_path
 
 app = Flask(__name__)
-@app.route("/webhook", methods=["GET"])
+@app.route("/webhook", methods=["GET"]) # Flask decorator that tells your app: "when someone sends an HTTP GET request to the URL path /webhook, run the function defined right below this line."
 def verify_webhook():
     if request.args.get("hub.verify_token") == VERIFY_TOKEN:
         return request.args.get("hub.challenge"), 200
     return "Verification failed", 403
 
-@app.route("/webhook", methods=["POST"])
+# A webhook is basically a notification system. Instead of you constantly asking "any new messages? any new messages?" (polling), you give the other service (Meta/WhatsApp) a URL, and they call you the moment something happens.
+
+@app.route("/webhook", methods=["POST"])  # Flask decorator that tells your app: "when someone sends an HTTP POST request to the URL path /webhook, run the function defined right below this line."
 def receive_webhook():
     data = request.get_json()
     try:
@@ -76,5 +78,4 @@ def receive_webhook():
 if __name__ == "__main__":
     # Example: send a file (uncomment to test)
     # send_file("911234567890", "report.pdf", caption="Here's the report")
-
     app.run(port=5000, debug=True)
