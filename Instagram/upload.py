@@ -54,10 +54,6 @@ def post_photo(image_url: str, caption: str = "") -> str:
 
 
 def post_video(video_url: str, caption: str = "", as_reel: bool = True) -> str:
-    """
-    Post a video. Videos always process asynchronously, so we poll before publishing.
-    Set as_reel=False to post as a regular feed video instead of a Reel.
-    """
     params = {
         "video_url": video_url,
         "caption": caption,
@@ -77,15 +73,10 @@ def post_video(video_url: str, caption: str = "", as_reel: bool = True) -> str:
 
 
 def post_carousel(media_urls: list[str], is_video: list[bool], caption: str = "") -> str:
-    """
-    Post up to 10 images/videos as a carousel.
-    media_urls and is_video must be the same length and same order.
-    """
     if len(media_urls) != len(is_video):
         raise ValueError("media_urls and is_video must be the same length")
     if not (2 <= len(media_urls) <= 10):
         raise ValueError("Carousels need 2-10 items")
-
     child_ids = []
     for url, vid in zip(media_urls, is_video):
         params = {

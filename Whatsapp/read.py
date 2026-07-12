@@ -52,7 +52,7 @@ def verify_webhook():
     return "Verification failed", 403
 
 # A webhook is basically a notification system. Instead of you constantly asking "any new messages? any new messages?" (polling), you give the other service (Meta/WhatsApp) a URL, and they call you the moment something happens.
-
+    
 @app.route("/webhook", methods=["POST"])  # Flask decorator that tells your app: "when someone sends an HTTP POST request to the URL path /webhook, run the function defined right below this line."
 def receive_webhook():
     data = request.get_json()
