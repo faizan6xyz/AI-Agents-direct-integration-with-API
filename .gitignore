@@ -2,3 +2,4 @@ Gmail/ss.json
 Gmail/token.pickle
 .vscode/
 __pycache__/
+.env
