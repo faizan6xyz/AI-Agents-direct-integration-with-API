@@ -4,7 +4,6 @@ import base64
 import os
 from dotenv import load_dotenv
 from flask_cors import CORS
-
 load_dotenv()
 
 app = Flask(__name__)
@@ -135,7 +134,6 @@ def capture_payment():
 
 @app.route('/api/order-status/<order_id>', methods=['GET'])
 def check_order_status(order_id):
-    """Check PayPal order status"""
     try:
         access_token = get_paypal_access_token()
         
