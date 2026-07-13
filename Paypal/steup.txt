@@ -15,3 +15,26 @@ Setup requirements
     6. Return/Cancel URLs — in production these should be real endpoints on your website/server (e.g. a /payment-success route) so PayPal can redirect the client back after they approve payment.
 
     7.(Recommended for production) Set up a webhook in the Developer Dashboard for the CHECKOUT.ORDER.APPROVED / PAYMENT.CAPTURE.COMPLETED events instead of manually polling — that way your server gets notified automatically instead of you having to re-check status yourself.
+
+
+"""
+Optimized PayPal Payment Integration (Flask backend)
+-----------------
+Production-oriented version with:
+- Credentials from environment variables (never hardcoded)
+- Cached OAuth token (avoids re-authenticating on every request)
+- Full order lifecycle: create -> approve (client-side) -> capture
+- Webhook endpoint with signature verification
+- Basic retry/error handling
+
+Requirements:
+    pip install flask requests python-dotenv
+
+Environment variables (.env or system env):
+    PAYPAL_CLIENT_ID=xxx
+    PAYPAL_SECRET=xxx
+    PAYPAL_ENV=sandbox            # or "live"
+    PAYPAL_WEBHOOK_ID=xxx         # from PayPal Dashboard > Webhooks
+    RETURN_URL=https://yourapp.com/payment/success
+    CANCEL_URL=https://yourapp.com/payment/cancel
+"""
