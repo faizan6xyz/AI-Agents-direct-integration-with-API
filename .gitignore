@@ -3,3 +3,7 @@ Gmail/token.pickle
 .vscode/
 __pycache__/
 .env
+metadata.docx
+email-data.csv
+received_emails.csv
+sent_emails.csv
