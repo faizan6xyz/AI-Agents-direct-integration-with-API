@@ -19,10 +19,7 @@ if PAYPAL_MODE == 'live':
     PAYPAL_API_BASE = 'https://api-m.paypal.com'
 else:
     PAYPAL_API_BASE = 'https://api-m.sandbox.paypal.com'
-
-
 def get_paypal_access_token():
-    """Get OAuth2 access token from PayPal"""
     try:
         auth_string = f"{PAYPAL_CLIENT_ID}:{PAYPAL_SECRET}"
         encoded_auth = base64.b64encode(auth_string.encode()).decode()
@@ -42,25 +39,19 @@ def get_paypal_access_token():
             raise Exception(f"Failed to get access token: {response.text}")
     except Exception as e:
         raise Exception(f"Error getting access token: {str(e)}")
-
-
 @app.route('/api/create-order', methods=['POST'])
 def create_order():
-    """Create PayPal order for mobile app"""
     try:
         data = request.json
         amount = data.get('amount', '99.00')
         currency = data.get('currency', 'USD')
         description = data.get('description', 'Payment')
-        
         # Validate amount
         amount_float = float(amount)
         if amount_float <= 0:
             return jsonify({'success': False, 'error': 'Invalid amount'}), 400
-        
         # Get access token
         access_token = get_paypal_access_token()
-        
         # Create order
         order_payload = {
             "intent": "CAPTURE",
@@ -71,8 +62,7 @@ def create_order():
                 },
                 "description": description
             }]
-        }
-        
+        } 
         response = requests.post(
             f"{PAYPAL_API_BASE}/v2/checkout/orders",
             headers={
@@ -100,8 +90,6 @@ def create_order():
             'success': False,
             'error': str(e)
         }), 500
-
-
 @app.route('/api/capture-payment', methods=['POST'])
 def capture_payment():
     try:
