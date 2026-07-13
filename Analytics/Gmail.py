@@ -1,9 +1,6 @@
 import os 
 import pandas as pd
 import matplotlib.pyplot as plt
-import os
-import pandas as pd
-import matplotlib.pyplot as plt
 def conversion_rate(send_file, receive_file):
     if not send_file or not os.path.exists(send_file):
         print("Error: Send file is missing or path is invalid.")
@@ -56,13 +53,14 @@ def conversion_rate(send_file, receive_file):
     if business_summary is not None:
         print("\nConversions by Business Type:")
         print(business_summary)
-    plot_conversion_metrics(total_sent, total_received, conversion_rate_pct,business_summary)
+    plot_conversion_metrics_by_categories(total_sent, total_received, conversion_rate_pct,business_summary)
+    plot_conversion_metrics(total_sent, total_received, conversion_rate_pct)
     return {"total_sent": total_sent,
         "total_converted": total_received,
         "conversion_rate": conversion_rate_pct,
         "business_breakdown": business_summary}
     
-def plot_conversion_metrics(sent, converted, rate ,business_summary):
+def plot_conversion_metrics_by_categories(sent, converted, rate ,business_summary):
     categories = business_summary["Business Type"]
     values = business_summary["Count"]
     colors = ['#4CAF50', '#2196F3']
@@ -81,6 +79,23 @@ def plot_conversion_metrics(sent, converted, rate ,business_summary):
     plt.tight_layout()
     plt.show()
 
-    
-    
+def plot_conversion_metrics(sent, converted, rate):
+    categories = ['Sent', 'Converted']
+    values = [sent, converted]
+    colors = ['#4CAF50', '#2196F3','#CA057f']
+    plt.figure(figsize=(8, 6))
+    bars = plt.bar(categories, values, color=colors, edgecolor='black')
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height,
+                 f'{int(height)}',
+                 ha='center', va='bottom', fontsize=12)
+    plt.title('Email Conversion Metrics', fontsize=14)
+    plt.ylabel('Number of Emails', fontsize=12)
+    plt.xlabel('Status', fontsize=12)
+    plt.ylim(0, max(values) * 1.1)  # Add space above bars
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
 result = conversion_rate('sent_emails.csv', 'received_emails.csv')
