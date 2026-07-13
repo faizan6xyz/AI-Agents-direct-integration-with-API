@@ -104,17 +104,13 @@ def create_order():
 
 @app.route('/api/capture-payment', methods=['POST'])
 def capture_payment():
-    """Capture/verify PayPal payment"""
     try:
         data = request.json
         order_id = data.get('order_id')
-        
         if not order_id:
             return jsonify({'success': False, 'error': 'Order ID required'}), 400
-        
         # Get access token
         access_token = get_paypal_access_token()
-        
         # Capture the order
         response = requests.post(
             f"{PAYPAL_API_BASE}/v2/checkout/orders/{order_id}/capture",
