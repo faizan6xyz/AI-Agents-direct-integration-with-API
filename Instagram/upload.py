@@ -35,11 +35,13 @@ RETRY_BACKOFF_BASE = 2               # seconds; doubles each retry
 RETRYABLE_IG_ERROR_CODES = {4, 17, 32}   # IG rate-limit / throttling codes
 ALLOWED_URL_SCHEMES = {"https"}
 
+#  strips your access token out of any error message or log line before it surfaces, so a stack trace or log file can't leak it
 def _redact(text: str) -> str:
     if ACCESS_TOKEN:
         text = text.replace(ACCESS_TOKEN, "[REDACTED]")
     return text
 
+# ejects anything that isn't https:// before it's fetched, so a malicious or malformed URL (file://, internal IPs, etc.) never reaches requests
 def _validate_media_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in ALLOWED_URL_SCHEMES:
@@ -202,6 +204,7 @@ def _check_caption(caption: str) -> None:
             f"{MAX_HASHTAGS} hashtag limit."
         )
 
+# validates username is present and x/y coordinates are within 0–1 before they're sent
 def _check_user_tags(user_tags: list[dict] = None) -> None:
     if not user_tags:
         return
