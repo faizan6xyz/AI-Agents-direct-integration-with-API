@@ -39,7 +39,6 @@ def get_comments(media_id: str) -> list[dict]:
     return data.get("data", [])
 
 def get_comment_replies(comment_id: str) -> list[dict]:
-    """Get replies to a specific comment."""
     data = _get(f"{comment_id}/replies", {
         "fields": "id,text,username,timestamp",
         "access_token": ACCESS_TOKEN,
@@ -64,7 +63,6 @@ def delete_comment(comment_id: str) -> bool:
     resp = requests.delete(f"{BASE_URL}/{comment_id}", params={"access_token": ACCESS_TOKEN})
     return resp.json().get("success", False)
 
-
 def get_conversations(limit: int = 20) -> list[dict]:
     data = _get(f"{IG_USER_ID}/conversations", {
         "platform": "instagram",
@@ -80,7 +78,6 @@ def get_messages(conversation_id: str, limit: int = 25) -> list[dict]:
         "access_token": ACCESS_TOKEN,
     })
     return data.get("messages", {}).get("data", [])
-
 
 def send_message(recipient_id: str, message: str) -> str:
     result = _post("me/messages", {
