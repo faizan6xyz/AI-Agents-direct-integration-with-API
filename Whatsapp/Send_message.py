@@ -84,10 +84,8 @@ def check_remote_file_size(url: str, msg_type: str):
         resp = requests.head(url, timeout=REQUEST_TIMEOUT, allow_redirects=True)
         content_length = resp.headers.get("Content-Length")
         if content_length is not None and int(content_length) > max_bytes:
-            raise FileTooLargeError(
-                f"File at {url} is {content_length} bytes, exceeds {max_bytes} "
-                f"byte limit for '{msg_type}'."
-            )
+            raise FileTooLargeError(f"File at {url} is {content_length} bytes, exceeds {max_bytes} "
+                f"byte limit for '{msg_type}'.")
     except requests.RequestException as e:
         log.warning(f"Could not verify remote file size for {url}: {e}")
 
@@ -110,14 +108,12 @@ def request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
 def send_whatsapp_message(recipient_number: str, message_body: str) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     message_body = validate_text_body(message_body)
-
     payload = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "text",
-        "text": {"body": message_body},
-    }
+        "text": {"body": message_body},}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
@@ -139,8 +135,7 @@ def send_whatsapp_media(recipient_number: str,msg_type: str,link: str,caption: s
         "recipient_type": "individual",
         "to": recipient_number,
         "type": msg_type,
-        msg_type: media_obj,
-    }
+        msg_type: media_obj,}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
@@ -154,7 +149,6 @@ def send_whatsapp_location(recipient_number: str, latitude: float, longitude: fl
         raise ValueError("latitude/longitude must be numbers.")
     if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
         raise ValueError("latitude must be in [-90, 90] and longitude in [-180, 180].")
-
     location_obj = {"latitude": lat, "longitude": lng}
     if name:
         location_obj["name"] = sanitize_field(name)[:1000]
