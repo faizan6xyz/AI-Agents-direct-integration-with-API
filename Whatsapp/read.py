@@ -71,7 +71,6 @@ def receive_webhook():
                 print(f"Saved incoming file to {save_path}")
     except (KeyError, IndexError) as e:
         print(f"Unexpected payload: {e}")
-
     return jsonify({"status": "received"}), 200
 
 

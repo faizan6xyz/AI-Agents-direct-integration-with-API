@@ -136,13 +136,10 @@ def analyze_monthly_trend():
     if df.empty:
         print("No usable data for trend analysis.")
         return
-
     df["year_month"] = df["period_end"].dt.to_period("M")
     monthly = df.groupby("year_month")[["gained_likes", "gained_views"]].sum()
-
     print("\n--- Month-over-month totals ---")
     print(monthly.round(0))
-
     fig, ax = plt.subplots(figsize=(10, 5))
     monthly.plot(ax=ax, marker="o")
     ax.set_title("Monthly Gained Likes/Views Over Time")
