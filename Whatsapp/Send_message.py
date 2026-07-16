@@ -42,9 +42,7 @@ log = logging.getLogger("whatsapp_sender")
 if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
     log.warning("WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set — sends will fail.")
 if not SEND_API_KEY:
-    log.warning(
-        "WHATSAPP_SEND_API_KEY not set — /send-test will refuse all requests until it is."
-    )
+    log.warning("WHATSAPP_SEND_API_KEY not set — /send-test will refuse all requests until it is.")
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  
 class InvalidPhoneNumberError(Exception):
@@ -71,9 +69,7 @@ def validate_text_body(body: str) -> str:
     if body is None:
         body = ""
     if len(body) > MAX_TEXT_LENGTH:
-        raise MessageTooLongError(
-            f"Message is {len(body)} chars, exceeds WhatsApp's {MAX_TEXT_LENGTH}-char limit."
-        )
+        raise MessageTooLongError(f"Message is {len(body)} chars, exceeds WhatsApp's {MAX_TEXT_LENGTH}-char limit.")
     return body
 
 def check_remote_file_size(url: str, msg_type: str):
