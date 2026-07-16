@@ -9,21 +9,17 @@ ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
 SEND_API_KEY = os.environ.get("WHATSAPP_SEND_API_KEY")  # protects /send-test
 GRAPH_URL = "https://graph.facebook.com/v19.0"
-HEADERS_JSON = {
-    "Authorization": f"Bearer {ACCESS_TOKEN}",
-    "Content-Type": "application/json",
-}
+HEADERS_JSON = {"Authorization": f"Bearer {ACCESS_TOKEN}","Content-Type": "application/json",}
 HEADERS_AUTH_ONLY = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
 REQUEST_TIMEOUT = 15
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 1.5
 MAX_TEXT_LENGTH = 4096  # WhatsApp's own hard limit for text message bodies
-MAX_FILE_SIZE_BYTES = {
-    "image": 5 * 1024 * 1024,       # 5 MB
+MAX_FILE_SIZE_BYTES = {"image": 5 * 1024 * 1024,       # 5 MB
     "audio": 16 * 1024 * 1024,      # 16 MB
     "video": 16 * 1024 * 1024,      # 16 MB
-    "document": 100 * 1024 * 1024,  # 100 MB
-}
+    "document": 100 * 1024 * 1024,  # 100 MB 
+    }
 VALID_MEDIA_TYPES = set(MAX_FILE_SIZE_BYTES.keys())
 MAX_BUTTONS = 3
 MAX_BUTTON_TITLE_LEN = 20
@@ -125,8 +121,7 @@ def send_whatsapp_media(recipient_number: str,msg_type: str,link: str,caption: s
         media_obj["caption"] = validate_text_body(caption)
     if filename and msg_type == "document":
         media_obj["filename"] = filename
-    payload = {
-        "messaging_product": "whatsapp",
+    payload = {"messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": msg_type,
@@ -173,9 +168,7 @@ def send_whatsapp_reply_buttons(recipient_number: str, body_text: str, buttons: 
         if len(btn_id) > MAX_BUTTON_ID_LEN:
             raise ValueError(f"Button id exceeds {MAX_BUTTON_ID_LEN} chars.")
         if len(title) > MAX_BUTTON_TITLE_LEN:
-            raise ValueError(
-                f"Button title '{title}' exceeds WhatsApp's {MAX_BUTTON_TITLE_LEN}-char limit."
-            )
+            raise ValueError(f"Button title '{title}' exceeds WhatsApp's {MAX_BUTTON_TITLE_LEN}-char limit.")
         if btn_id in seen_ids:
             raise ValueError(f"Duplicate button id '{btn_id}'.")
         seen_ids.add(btn_id)
@@ -187,8 +180,7 @@ def send_whatsapp_reply_buttons(recipient_number: str, body_text: str, buttons: 
         "interactive": {
             "type": "button",
             "body": {"text": body_text},
-            "action": {"buttons": formatted_buttons},
-        },}
+            "action": {"buttons": formatted_buttons},},}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
@@ -216,13 +208,9 @@ def send_whatsapp_list(recipient_number: str, body_text: str, button_text: str, 
             if not row_id or not row_title:
                 raise ValueError("Each row needs a non-empty 'id' and 'title'.")
             if len(row_title) > MAX_LIST_ROW_TITLE_LEN:
-                raise ValueError(
-                    f"Row title '{row_title}' exceeds {MAX_LIST_ROW_TITLE_LEN}-char limit."
-                )
+                raise ValueError(f"Row title '{row_title}' exceeds {MAX_LIST_ROW_TITLE_LEN}-char limit.")
             if len(row_desc) > MAX_LIST_ROW_DESC_LEN:
-                raise ValueError(
-                    f"Row description exceeds {MAX_LIST_ROW_DESC_LEN}-char limit."
-                )
+                raise ValueError(f"Row description exceeds {MAX_LIST_ROW_DESC_LEN}-char limit.")
             if row_id in seen_row_ids:
                 raise ValueError(f"Duplicate row id '{row_id}'.")
             seen_row_ids.add(row_id)
@@ -234,18 +222,14 @@ def send_whatsapp_list(recipient_number: str, body_text: str, button_text: str, 
         if total_rows > MAX_LIST_ROWS_TOTAL:
             raise ValueError(f"Total rows across all sections exceeds {MAX_LIST_ROWS_TOTAL}.")
         formatted_sections.append({"title": title, "rows": formatted_rows})
-
-    payload = {
-        "messaging_product": "whatsapp",
+    payload = {"messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "interactive",
         "interactive": {
             "type": "list",
             "body": {"text": body_text},
-            "action": {"button": button_text, "sections": formatted_sections},
-        },
-    }
+            "action": {"button": button_text, "sections": formatted_sections},},}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
@@ -258,13 +242,11 @@ def send_whatsapp_reaction(recipient_number: str, message_id: str, emoji: str) -
         emoji = ""
     if len(emoji) > MAX_EMOJI_LEN:
         raise ValueError(f"emoji field exceeds {MAX_EMOJI_LEN} chars — pass a single emoji.")
-    payload = {
-        "messaging_product": "whatsapp",
+    payload = {"messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "reaction",
-        "reaction": {"message_id": message_id, "emoji": emoji},
-    }
+        "reaction": {"message_id": message_id, "emoji": emoji},}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
@@ -278,23 +260,17 @@ def send_whatsapp_contacts(recipient_number: str, contacts: list) -> dict:
         formatted_name = str(c.get("formatted_name", "")).strip()
         if not formatted_name:
             raise ValueError("Each contact needs a non-empty 'formatted_name'.")
-        contact_obj = {
-            "name": {
+        contact_obj = {"name": {
                 "formatted_name": sanitize_field(formatted_name)[:200],
-                "first_name": sanitize_field(c.get("first_name", formatted_name))[:100],
-            }}
+                "first_name": sanitize_field(c.get("first_name", formatted_name))[:100],}}
         if c.get("phone"):
-            contact_obj["phones"] = [
-                {"phone": str(c["phone"]), "type": c.get("phone_type", "CELL")}
-            ]
+            contact_obj["phones"] = [{"phone": str(c["phone"]), "type": c.get("phone_type", "CELL")}]
         formatted_contacts.append(contact_obj)
-    payload = {
-        "messaging_product": "whatsapp",
+    payload = {"messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "contacts",
-        "contacts": formatted_contacts,
-    }
+        "contacts": formatted_contacts,}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
@@ -348,23 +324,19 @@ def test_send():
         elif msg_type in VALID_MEDIA_TYPES:
             if "link" not in data:
                 return jsonify({"error": f"'link' is required for type '{msg_type}'"}), 400
-            result = send_whatsapp_media(
-                phone,
+            result = send_whatsapp_media(phone,
                 msg_type,
                 link=data["link"],
                 caption=data.get("caption"),
-                filename=data.get("filename"),
-            )
+                filename=data.get("filename"),)
         elif msg_type == "location":
             if "latitude" not in data or "longitude" not in data:
                 return jsonify({"error": "'latitude' and 'longitude' are required"}), 400
-            result = send_whatsapp_location(
-                phone,
+            result = send_whatsapp_location(phone,
                 data["latitude"],
                 data["longitude"],
                 name=data.get("name"),
-                address=data.get("address"),
-            )
+                address=data.get("address"),)
         elif msg_type == "button":
             if "body" not in data or "buttons" not in data:
                 return jsonify({"error": "'body' and 'buttons' are required"}), 400
