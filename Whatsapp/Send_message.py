@@ -104,8 +104,7 @@ def request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
 def send_whatsapp_message(recipient_number: str, message_body: str) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     message_body = validate_text_body(message_body)
-    payload = {
-        "messaging_product": "whatsapp",
+    payload = {"messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "text",
@@ -150,8 +149,7 @@ def send_whatsapp_location(recipient_number: str, latitude: float, longitude: fl
         location_obj["name"] = sanitize_field(name)[:1000]
     if address:
         location_obj["address"] = sanitize_field(address)[:1000]
-    payload = {
-        "messaging_product": "whatsapp",
+    payload = {"messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "location",
@@ -163,7 +161,6 @@ def send_whatsapp_location(recipient_number: str, latitude: float, longitude: fl
 def send_whatsapp_reply_buttons(recipient_number: str, body_text: str, buttons: list) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     body_text = validate_text_body(body_text)
-
     if not buttons or len(buttons) > MAX_BUTTONS:
         raise ValueError(f"Provide 1-{MAX_BUTTONS} buttons, got {len(buttons) if buttons else 0}.")
     formatted_buttons = []
@@ -183,8 +180,7 @@ def send_whatsapp_reply_buttons(recipient_number: str, body_text: str, buttons: 
             raise ValueError(f"Duplicate button id '{btn_id}'.")
         seen_ids.add(btn_id)
         formatted_buttons.append({"type": "reply", "reply": {"id": btn_id, "title": title}})
-    payload = {
-        "messaging_product": "whatsapp",
+    payload = {"messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "interactive",
@@ -192,8 +188,7 @@ def send_whatsapp_reply_buttons(recipient_number: str, body_text: str, buttons: 
             "type": "button",
             "body": {"text": body_text},
             "action": {"buttons": formatted_buttons},
-        },
-    }
+        },}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
