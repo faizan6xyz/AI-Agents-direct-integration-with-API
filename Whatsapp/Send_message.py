@@ -165,8 +165,7 @@ def send_whatsapp_location(recipient_number: str, latitude: float, longitude: fl
         "recipient_type": "individual",
         "to": recipient_number,
         "type": "location",
-        "location": location_obj,
-    }
+        "location": location_obj,}
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
