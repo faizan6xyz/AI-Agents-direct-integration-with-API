@@ -3,3 +3,5 @@ Gmail/token.pickle
 .vscode/
 __pycache__/
 .env
+example.env
+confi.env

@@ -15,7 +15,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gmail_client")
-SCOPES = ['https://www.googleapis.com/auth/gmail.modify']  # read + send + labels
+GMAIL_SCOPES = os.environ.get("GMAIL_SCOPES") #env
+SCOPES = [scope.strip() for scope in GMAIL_SCOPES.split(",")]
 TOKEN_PATH = 'Gmail/token.pickle'
 CLIENT_SECRET_PATH = 'Gmail/ss.json'
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024   # Gmail's hard cap per message
