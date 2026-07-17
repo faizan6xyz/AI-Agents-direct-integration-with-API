@@ -8,13 +8,14 @@ import datetime
 import hashlib
 import requests
 from flask import Flask, request, jsonify
-ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN")
-PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
-VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN")
-APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  # for signature verification
-GRAPH_URL = "https://graph.facebook.com/v19.0"
+ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN") #env
+PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID") #env
+VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN") #env
+APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  #env
+API_VERSION = os.environ.get("WHATSAPP_API_VERSION") #env
+GRAPH_URL = f"https://graph.facebook.com/{API_VERSION}" 
 HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-DOWNLOAD_DIR = "downloads"
+DOWNLOAD_DIR = "Download"
 REQUEST_TIMEOUT = 15          # seconds, for every outbound HTTP call
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 1.5      # seconds; doubles-ish each retry
@@ -24,18 +25,14 @@ MAX_FILE_SIZE_BYTES = {
     "video": 16 * 1024 * 1024,     # 16 MB
     "document": 100 * 1024 * 1024,  # 100 MB
 }
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",)
 log = logging.getLogger("whatsapp_webhook")
 if not all([ACCESS_TOKEN, PHONE_NUMBER_ID, VERIFY_TOKEN, APP_SECRET]):
-    log.warning(
-        "One or more required environment variables are missing "
+    log.warning("One or more required environment variables are missing "
         "(WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, "
         "WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET). "
-        "The webhook will not work correctly until these are set."
-    )
+        "The webhook will not work correctly until these are set.")
 app = Flask(__name__)
 
 def is_valid_signature(req) -> bool:
@@ -47,9 +44,7 @@ def is_valid_signature(req) -> bool:
         log.warning("Missing or malformed X-Hub-Signature-256 header.")
         return False
     received_sig = signature_header.split("sha256=", 1)[1]
-    expected_sig = hmac.new(
-        APP_SECRET.encode("utf-8"), req.get_data(), hashlib.sha256
-    ).hexdigest()
+    expected_sig = hmac.new(APP_SECRET.encode("utf-8"), req.get_data(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(received_sig, expected_sig)
 
 def sanitize_component(value: str, fallback: str = "unknown") -> str:
@@ -64,9 +59,7 @@ def request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = requests.request(
-                method, url, timeout=REQUEST_TIMEOUT, **kwargs
-            )
+            resp = requests.request(method, url, timeout=REQUEST_TIMEOUT, **kwargs)
             if resp.status_code >= 500:
                 raise requests.HTTPError(f"Server error {resp.status_code}")
             resp.raise_for_status()
@@ -76,8 +69,7 @@ def request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
             wait = RETRY_BACKOFF_BASE ** attempt
             log.warning(
                 f"Request to {url} failed (attempt {attempt}/{MAX_RETRIES}): {e}. "
-                f"Retrying in {wait:.1f}s..."
-            )
+                f"Retrying in {wait:.1f}s...")
             time.sleep(wait)
     raise last_exc
 
@@ -92,18 +84,14 @@ def download_file(media_id: str, save_path: str, msg_type: str) -> str:
     file_url = meta["url"]
     declared_size = meta.get("file_size")
     if max_bytes and declared_size and int(declared_size) > max_bytes:
-        raise FileTooLargeError(
-            f"Declared size {declared_size} bytes exceeds {max_bytes} byte "
-            f"limit for '{msg_type}'. Skipping download."
-        )
+        raise FileTooLargeError(f"Declared size {declared_size} bytes exceeds {max_bytes} byte "
+            f"limit for '{msg_type}'. Skipping download.")
     # Step 2: stream the download, enforcing the cap chunk-by-chunk in case
     # the server's declared size can't be trusted or is missing
     downloaded = 0
     tmp_path = save_path + ".part"
     try:
-        with requests.get(
-            file_url, headers=HEADERS, stream=True, timeout=REQUEST_TIMEOUT
-        ) as file_resp:
+        with requests.get(file_url, headers=HEADERS, stream=True, timeout=REQUEST_TIMEOUT) as file_resp:
             file_resp.raise_for_status()
             with open(tmp_path, "wb") as f:
                 for chunk in file_resp.iter_content(chunk_size=64 * 1024):
@@ -111,10 +99,8 @@ def download_file(media_id: str, save_path: str, msg_type: str) -> str:
                         continue
                     downloaded += len(chunk)
                     if max_bytes and downloaded > max_bytes:
-                        raise FileTooLargeError(
-                            f"'{msg_type}' download exceeded {max_bytes} byte "
-                            f"limit mid-stream. Aborting."
-                        )
+                        raise FileTooLargeError(f"'{msg_type}' download exceeded {max_bytes} byte "
+                            f"limit mid-stream. Aborting.")
                     f.write(chunk)
         os.replace(tmp_path, save_path)  # atomic-ish move once fully validated
         return save_path

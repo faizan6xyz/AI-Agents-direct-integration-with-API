@@ -8,22 +8,24 @@ import threading
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from openpyxl import Workbook, load_workbook
-VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN")
-APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  # Meta App Dashboard > Settings > Basic
+ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN") #env
+VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN") #env
+APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  #env
+PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID") #env
 CSV_FILE = r"Analytics/Report/whatsapp_messages.csv"
 EXCEL_FILE = r"Analytics/Report/whatsapp_messages.xlsx"
 COLUMNS_NAME = ["Timestamp", "Sender Number", "Message"]
 MAX_MESSAGE_LENGTH = 4000  # guards against pathological/huge payloads bloating the log
 file_lock = threading.Lock()
 app = Flask(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",)
 log = logging.getLogger("whatsapp_logger")
-if not VERIFY_TOKEN or not APP_SECRET:
-    log.warning("WHATSAPP_VERIFY_TOKEN and/or WHATSAPP_APP_SECRET are not set. "
-        "Set them as environment variables before running in production.")
+if not all([ACCESS_TOKEN, PHONE_NUMBER_ID, VERIFY_TOKEN, APP_SECRET]):
+    log.warning("One or more required environment variables are missing "
+        "(WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, "
+        "WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET). "
+        "The webhook will not work correctly until these are set.")
 
 def is_valid_signature(req) -> bool:
     if not APP_SECRET:
@@ -94,7 +96,6 @@ def verify_webhook():
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
     if mode == "subscribe" and token == VERIFY_TOKEN:
         return challenge, 200
     log.warning("Webhook verification attempt failed (bad mode/verify token).")
@@ -112,6 +113,8 @@ def receive_webhook_message():
             changes = entry.get("changes", [])
             for change in changes:
                 value = change.get("value", {})
+                if not is_valid_phone_number_id(value):
+                    continue
                 messages = value.get("messages", [])
                 for msg in messages:
                     try:
@@ -121,6 +124,16 @@ def receive_webhook_message():
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
     return jsonify({"status": "received"}), 200
+
+def is_valid_phone_number_id(value: dict) -> bool:
+    if not PHONE_NUMBER_ID:
+        return True
+    incoming_id = value.get("metadata", {}).get("phone_number_id")
+    if incoming_id != PHONE_NUMBER_ID:
+        log.warning(f"Rejected webhook payload: unexpected phone_number_id "
+            f"({incoming_id!r}).")
+        return False
+    return True
 
 def process_single_message(msg: dict):
     sender = msg.get("from", "unknown")
@@ -145,5 +158,4 @@ def process_single_message(msg: dict):
 if __name__ == "__main__":
     ensure_csv_exists()
     ensure_excel_exists()
-    # debug=True is convenient locally but should be False in production
     app.run(host="0.0.0.0", port=5000, debug=True)

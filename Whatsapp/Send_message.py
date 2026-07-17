@@ -4,11 +4,15 @@ import time
 import logging
 from collections import defaultdict, deque
 import requests
+import hmac
+import hashlib
 from flask import Flask, request, jsonify
-ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN")
-PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
-SEND_API_KEY = os.environ.get("WHATSAPP_SEND_API_KEY")  # protects /send-test
-GRAPH_URL = "https://graph.facebook.com/v19.0"
+ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN") #env
+PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID") #env
+SEND_API_KEY = os.environ.get("WHATSAPP_SEND_API_KEY")  #env
+VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN") #env
+APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  #env
+GRAPH_URL = "https://graph.facebook.com/v19.0" 
 HEADERS_JSON = {"Authorization": f"Bearer {ACCESS_TOKEN}","Content-Type": "application/json",}  # application/json is a MIME type — a standardized label that tells whoever receives some data "here's the format this content is in, parse it accordingly."
 HEADERS_AUTH_ONLY = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
 REQUEST_TIMEOUT = 15
@@ -35,10 +39,24 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 _request_log = defaultdict(deque)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("whatsapp_sender")
-if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
-    log.warning("WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set — sends will fail.")
-if not SEND_API_KEY:
-    log.warning("WHATSAPP_SEND_API_KEY not set — /send-test will refuse all requests until it is.")
+if not all([ACCESS_TOKEN, PHONE_NUMBER_ID, VERIFY_TOKEN, APP_SECRET]):
+    log.warning("One or more required environment variables are missing "
+        "(WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, "
+        "WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET). "
+        "The webhook will not work correctly until these are set.")
+app = Flask(__name__)
+
+def is_valid_signature(req) -> bool:
+    if not APP_SECRET:
+        log.error("APP_SECRET not configured — refusing to process webhook.")
+        return False
+    signature_header = req.headers.get("X-Hub-Signature-256", "")
+    if not signature_header.startswith("sha256="):
+        log.warning("Missing or malformed X-Hub-Signature-256 header.")
+        return False
+    received_sig = signature_header.split("sha256=", 1)[1]
+    expected_sig = hmac.new(APP_SECRET.encode("utf-8"), req.get_data(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(received_sig, expected_sig)
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  
 class InvalidPhoneNumberError(Exception):
@@ -234,47 +252,6 @@ def send_whatsapp_list(recipient_number: str, body_text: str, button_text: str, 
     resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
     return resp.json()
 
-def send_whatsapp_reaction(recipient_number: str, message_id: str, emoji: str) -> dict:
-    recipient_number = validate_phone_number(recipient_number)
-    if not message_id or not str(message_id).startswith("wamid."):
-        raise ValueError("message_id must be a valid WhatsApp message id (starts with 'wamid.').")
-    if emoji is None:
-        emoji = ""
-    if len(emoji) > MAX_EMOJI_LEN:
-        raise ValueError(f"emoji field exceeds {MAX_EMOJI_LEN} chars — pass a single emoji.")
-    payload = {"messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": recipient_number,
-        "type": "reaction",
-        "reaction": {"message_id": message_id, "emoji": emoji},}
-    url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
-    resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
-    return resp.json()
-
-def send_whatsapp_contacts(recipient_number: str, contacts: list) -> dict:
-    recipient_number = validate_phone_number(recipient_number)
-    if not contacts:
-        raise ValueError("Provide at least one contact.")
-    formatted_contacts = []
-    for c in contacts:
-        formatted_name = str(c.get("formatted_name", "")).strip()
-        if not formatted_name:
-            raise ValueError("Each contact needs a non-empty 'formatted_name'.")
-        contact_obj = {"name": {
-                "formatted_name": sanitize_field(formatted_name)[:200],
-                "first_name": sanitize_field(c.get("first_name", formatted_name))[:100],}}
-        if c.get("phone"):
-            contact_obj["phones"] = [{"phone": str(c["phone"]), "type": c.get("phone_type", "CELL")}]
-        formatted_contacts.append(contact_obj)
-    payload = {"messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": recipient_number,
-        "type": "contacts",
-        "contacts": formatted_contacts,}
-    url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
-    resp = request_with_retry("POST", url, headers=HEADERS_JSON, json=payload)
-    return resp.json()
-
 def require_api_key():
     if not SEND_API_KEY:
         return jsonify({"error": "Server not configured (missing API key)"}), 500
@@ -345,14 +322,6 @@ def test_send():
             if "body" not in data or "button_text" not in data or "sections" not in data:
                 return jsonify({"error": "'body', 'button_text', and 'sections' are required"}), 400
             result = send_whatsapp_list(phone, data["body"], data["button_text"], data["sections"])
-        elif msg_type == "reaction":
-            if "message_id" not in data:
-                return jsonify({"error": "'message_id' is required"}), 400
-            result = send_whatsapp_reaction(phone, data["message_id"], data.get("emoji", ""))
-        elif msg_type == "contacts":
-            if "contacts" not in data:
-                return jsonify({"error": "'contacts' is required"}), 400
-            result = send_whatsapp_contacts(phone, data["contacts"])
         else:
             return jsonify({"error": f"Unsupported type '{msg_type}'"}), 400
         return jsonify({"status": "sent", "details": result}), 200

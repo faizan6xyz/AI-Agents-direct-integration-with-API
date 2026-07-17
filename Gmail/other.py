@@ -7,7 +7,6 @@ from email.mime.application import MIMEApplication
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/gmail.settings.basic',
@@ -28,17 +27,14 @@ def get_service(credentials_path='credentials.json', token_path='token.pickle'):
             pickle.dump(creds, f)
     return build('gmail', 'v1', credentials=creds)
 
-
 def list_messages(service, query='', max_results=10, label_ids=None):
     results = service.users().messages().list(
         userId='me', q=query, maxResults=max_results, labelIds=label_ids or []
     ).execute()
     return results.get('messages', [])
 
-
 def get_message(service, msg_id, format='full'):
     return service.users().messages().get(userId='me', id=msg_id, format=format).execute()
-
 
 def _decode_body(data):
     return base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
@@ -59,7 +55,6 @@ def get_message_body(service, msg_id):
     if 'data' in payload.get('body', {}):
         return _decode_body(payload['body']['data'])
     return walk(payload) or ''
-
 
 def send_message(service, to, subject, body_text):
     message = MIMEText(body_text)
@@ -94,31 +89,24 @@ def create_label(service, name, list_visibility='labelShow', label_visibility='l
     }
     return service.users().labels().create(userId='me', body=body).execute()
 
-
 def delete_label(service, label_id):
     return service.users().labels().delete(userId='me', id=label_id).execute()
-
 
 def modify_labels(service, msg_id, add_labels=None, remove_labels=None):
     body = {'addLabelIds': add_labels or [], 'removeLabelIds': remove_labels or []}
     return service.users().messages().modify(userId='me', id=msg_id, body=body).execute()
 
-
 def mark_as_read(service, msg_id):
     return modify_labels(service, msg_id, remove_labels=['UNREAD'])
-
 
 def mark_as_unread(service, msg_id):
     return modify_labels(service, msg_id, add_labels=['UNREAD'])
 
-
 def archive_message(service, msg_id):
     return modify_labels(service, msg_id, remove_labels=['INBOX'])
 
-
 def trash_message(service, msg_id):
     return service.users().messages().trash(userId='me', id=msg_id).execute()
-
 
 def delete_message_permanently(service, msg_id):
     return service.users().messages().delete(userId='me', id=msg_id).execute()
@@ -221,7 +209,6 @@ def set_vacation_responder(service, subject, body_text, enabled=True):
 
 def list_send_as_aliases(service):
     return service.users().settings().sendAs().list(userId='me').execute().get('sendAs', [])
-
 
 def list_forwarding_addresses(service):
     return service.users().settings().forwardingAddresses().list(userId='me').execute().get(
