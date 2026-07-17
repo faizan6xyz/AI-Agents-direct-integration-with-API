@@ -2,7 +2,7 @@ import re
 import argparse
 from pathlib import Path
 import pandas as pd
-CONVERSION_KEYWORDS = ["order", "buy", "purchase", "confirm", "book", "yes i want"]
+CONVERSION_KEYWORDS = ["order", "buy", "purchase", "confirm", "book", "yes i want" ,"yes i'm interested","yes i am interested", "inquire"]
 UNSUPPORTED_TYPE_RE = re.compile(r"^\[Unsupported message type:\s*(\w+)\]$")
 
 def load_data(path: str) -> pd.DataFrame:

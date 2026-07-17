@@ -36,7 +36,6 @@ def compute_metrics(df: pd.DataFrame, keywords: list) -> dict:
     df["hour"] = df["Timestamp"].dt.hour
     total_messages = len(df)
     unique_senders = df["Sender Number"].nunique()
-    # --- Per-sender breakdown ---
     per_sender = df.groupby("Sender Number").agg(
         message_count=("Message", "count"),
         first_message=("Timestamp", "min"),
@@ -44,7 +43,6 @@ def compute_metrics(df: pd.DataFrame, keywords: list) -> dict:
     per_sender["is_repeat"] = per_sender["message_count"] > 1
     repeat_senders = int(per_sender["is_repeat"].sum())
     repeat_rate = (repeat_senders / unique_senders * 100) if unique_senders else 0
-    # --- Keyword-based conversion ---
     keyword_pattern = "|".join(re.escape(k) for k in keywords) if keywords else None
     if keyword_pattern:
         df["matched_keyword"] = df["Message"].str.contains(keyword_pattern, case=False, na=False, regex=True)

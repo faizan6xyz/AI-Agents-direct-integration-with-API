@@ -10,8 +10,8 @@ from flask import Flask, request, jsonify
 from openpyxl import Workbook, load_workbook
 VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN")
 APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  # Meta App Dashboard > Settings > Basic
-CSV_FILE = "whatsapp_messages.csv"
-EXCEL_FILE = "whatsapp_messages.xlsx"
+CSV_FILE = r"Analytics/Report/whatsapp_messages.csv"
+EXCEL_FILE = r"Analytics/Report/whatsapp_messages.xlsx"
 COLUMNS_NAME = ["Timestamp", "Sender Number", "Message"]
 MAX_MESSAGE_LENGTH = 4000  # guards against pathological/huge payloads bloating the log
 file_lock = threading.Lock()
