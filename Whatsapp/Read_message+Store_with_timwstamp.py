@@ -12,7 +12,7 @@ VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN")
 APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  # Meta App Dashboard > Settings > Basic
 CSV_FILE = "whatsapp_messages.csv"
 EXCEL_FILE = "whatsapp_messages.xlsx"
-CSV_HEADERS = ["Timestamp", "Sender Number", "Message"]
+COLUMNS_NAME = ["Timestamp", "Sender Number", "Message"]
 MAX_MESSAGE_LENGTH = 4000  # guards against pathological/huge payloads bloating the log
 file_lock = threading.Lock()
 app = Flask(__name__)
@@ -22,10 +22,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("whatsapp_logger")
 if not VERIFY_TOKEN or not APP_SECRET:
-    log.warning(
-        "WHATSAPP_VERIFY_TOKEN and/or WHATSAPP_APP_SECRET are not set. "
-        "Set them as environment variables before running in production."
-    )
+    log.warning("WHATSAPP_VERIFY_TOKEN and/or WHATSAPP_APP_SECRET are not set. "
+        "Set them as environment variables before running in production.")
 
 def is_valid_signature(req) -> bool:
     if not APP_SECRET:
@@ -61,14 +59,14 @@ def ensure_csv_exists():
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(CSV_HEADERS)
+            writer.writerow(COLUMNS_NAME)
 
 def ensure_excel_exists():
     if not os.path.exists(EXCEL_FILE):
         wb = Workbook()
         ws = wb.active
         ws.title = "Messages"
-        ws.append(CSV_HEADERS)
+        ws.append(COLUMNS_NAME)
         wb.save(EXCEL_FILE)
 
 def log_message(timestamp: str, sender: str, message: str):
@@ -89,8 +87,6 @@ def log_message(timestamp: str, sender: str, message: str):
             ws.append([timestamp, sender, message])
             wb.save(EXCEL_FILE)
         except Exception as e:
-            # Excel failures shouldn't take down the webhook — the CSV
-            # copy above already has the data safely.
             log.error(f"Failed to write Excel row: {e}")
 
 @app.route("/webhook", methods=["GET"])
@@ -106,7 +102,6 @@ def verify_webhook():
 
 @app.route("/webhook", methods=["POST"])
 def receive_webhook_message():
-    # --- Security gate: reject anything not genuinely signed by Meta ---
     if not is_valid_signature(request):
         log.error("Rejected webhook POST: invalid or missing signature.")
         return jsonify({"status": "invalid signature"}), 403
@@ -119,18 +114,13 @@ def receive_webhook_message():
                 value = change.get("value", {})
                 messages = value.get("messages", [])
                 for msg in messages:
-                    # Isolate failures per-message so one malformed
-                    # message doesn't stop the rest of the batch.
                     try:
                         process_single_message(msg)
                     except Exception as e:
                         log.exception(f"Failed to process message {msg.get('id')}: {e}")
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
-
-    # Always ack quickly so Meta doesn't retry-storm the webhook
     return jsonify({"status": "received"}), 200
-
 
 def process_single_message(msg: dict):
     sender = msg.get("from", "unknown")
@@ -144,7 +134,6 @@ def process_single_message(msg: dict):
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     else:
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
     msg_type = msg.get("type")
     if msg_type == "text":
         message_text = msg.get("text", {}).get("body", "")

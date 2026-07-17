@@ -25,11 +25,9 @@ def load_data(path: str) -> pd.DataFrame:
     df["Message"] = df["Message"].fillna("").astype(str)
     return df
 
-
 def classify_message_type(message: str) -> str:
     m = UNSUPPORTED_TYPE_RE.match(message.strip())
     return m.group(1) if m else "text"
-
 
 def compute_metrics(df: pd.DataFrame, keywords: list) -> dict:
     df = df.copy()
