@@ -1,8 +1,8 @@
 import re
-import argparse
 from pathlib import Path
 import pandas as pd
-CONVERSION_KEYWORDS = ["order", "buy", "purchase", "confirm", "book", "yes i want"]
+
+CONVERSION_KEYWORDS = ["order", "buy", "purchase", "confirm", "book", "yes i want", "yes i'm interested", "yes i am interested", "inquire"]
 UNSUPPORTED_TYPE_RE = re.compile(r"^\[Unsupported message type:\s*(\w+)\]$")
 
 def load_data(path: str) -> pd.DataFrame:
@@ -36,8 +36,7 @@ def compute_metrics(df: pd.DataFrame, keywords: list) -> dict:
     df["hour"] = df["Timestamp"].dt.hour
     total_messages = len(df)
     unique_senders = df["Sender Number"].nunique()
-    per_sender = df.groupby("Sender Number").agg(
-        message_count=("Message", "count"),
+    per_sender = df.groupby("Sender Number").agg(message_count=("Message", "count"),
         first_message=("Timestamp", "min"),
         last_message=("Timestamp", "max"),)
     per_sender["is_repeat"] = per_sender["message_count"] > 1
@@ -66,7 +65,6 @@ def compute_metrics(df: pd.DataFrame, keywords: list) -> dict:
         "type_breakdown": type_breakdown,
         "per_sender": per_sender.sort_values("message_count", ascending=False),}
 
-
 def print_report(results: dict):
     print("\n===== WhatsApp Logger Engagement Report =====")
     print(f"Total incoming messages   : {results['total_messages']}")
@@ -85,25 +83,14 @@ def print_report(results: dict):
     print("\n--- Top 10 most active senders ---")
     print(results["per_sender"].head(10).to_string())
 
-def main():
-    parser = argparse.ArgumentParser(description="WhatsApp message logger engagement analysis")
-    parser.add_argument("input_file", help="Path to whatsapp_messages.csv or .xlsx")
-    parser.add_argument("--keywords",
-        help="Comma-separated conversion keywords (overrides the built-in list)",
-        default=None,)
-    parser.add_argument("--export-csv",
-        help="Optional path to save the per-sender breakdown as CSV",
-        default=None,)
-    args = parser.parse_args()
-    keywords = ([k.strip() for k in args.keywords.split(",") if k.strip()]
-        if args.keywords
-        else CONVERSION_KEYWORDS)
-    df = load_data(args.input_file)
+def main(input_file: str, keywords: list = None, export_csv: str = None):
+    keywords = keywords or CONVERSION_KEYWORDS
+    df = load_data(input_file)
     results = compute_metrics(df, keywords)
     print_report(results)
-    if args.export_csv:
-        results["per_sender"].to_csv(args.export_csv)
-        print(f"Per-sender breakdown saved to: {args.export_csv}")
+    if export_csv:
+        results["per_sender"].to_csv(export_csv)
+        print(f"Per-sender breakdown saved to: {export_csv}")
 
 if __name__ == "__main__":
-    main()
+    main("whatsapp_messages.csv") 
