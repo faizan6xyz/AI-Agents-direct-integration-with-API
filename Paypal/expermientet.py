@@ -1,73 +1,49 @@
 
 import requests
-# Get these from https://developer.paypal.com/dashboard/applications
 PAYPAL_CLIENT_ID = "YOUR_CLIENT_ID"
 PAYPAL_SECRET = "YOUR_SECRET"
-# Use sandbox for testing, live for production
-PAYPAL_BASE_URL = "https://api-m.sandbox.paypal.com"   # change to
-# PAYPAL_BASE_URL = "https://api-m.paypal.com"         # for live/production
-# Order amount details (used only if a new payment link needs to be created)
+PAYPAL_BASE_URL = "https://api-m.sandbox.paypal.com"
 ORDER_AMOUNT = "10.00"
 ORDER_CURRENCY = "USD"
 RETURN_URL = "https://example.com/payment-success"
 CANCEL_URL = "https://example.com/payment-cancel"
-#  AUTH 
+
 def get_access_token():
-    response = requests.post(
-        f"{PAYPAL_BASE_URL}/v1/oauth2/token",
+    response = requests.post(f"{PAYPAL_BASE_URL}/v1/oauth2/token",
         headers={"Accept": "application/json", "Accept-Language": "en_US"},
         data={"grant_type": "client_credentials"},
-        auth=(PAYPAL_CLIENT_ID, PAYPAL_SECRET),
-    )
+        auth=(PAYPAL_CLIENT_ID, PAYPAL_SECRET),)
     response.raise_for_status()
     return response.json()["access_token"]
 
-#  CHECK STATUS 
 def check_order_status(order_id, access_token):
-    response = requests.get(
-        f"{PAYPAL_BASE_URL}/v2/checkout/orders/{order_id}",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
+    response = requests.get(f"{PAYPAL_BASE_URL}/v2/checkout/orders/{order_id}",
+        headers={"Authorization": f"Bearer {access_token}"},)
     if response.status_code != 200:
         return None
     return response.json().get("status")
 
-#  CREATE PAYMENT LINK 
 def create_payment_link(access_token):
     payload = {
         "intent": "CAPTURE",
-        "purchase_units": [
-            {
+        "purchase_units": [{
                 "amount": {
                     "currency_code": ORDER_CURRENCY,
-                    "value": ORDER_AMOUNT,
-                }
-            }
-        ],
+                    "value": ORDER_AMOUNT,}}],
         "application_context": {
             "return_url": RETURN_URL,
             "cancel_url": CANCEL_URL,
-            "user_action": "PAY_NOW",
-        },
-    }
-    response = requests.post(
-        f"{PAYPAL_BASE_URL}/v2/checkout/orders",
+            "user_action": "PAY_NOW",},}
+    response = requests.post(f"{PAYPAL_BASE_URL}/v2/checkout/orders",
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {access_token}",
-        },
-        json=payload,
-    )
+            "Authorization": f"Bearer {access_token}",},
+        json=payload,)
     response.raise_for_status()
     order = response.json()
-
-    approval_link = next(
-        (link["href"] for link in order["links"] if link["rel"] == "approve"),
-        None,
-    )
+    approval_link = next((link["href"] for link in order["links"] if link["rel"] == "approve"),None,)
     return order["id"], approval_link
 
-#  MAIN LOGIC 
 def check_or_request_payment(order_id=None):
     access_token = get_access_token()
     if order_id:
@@ -75,7 +51,6 @@ def check_or_request_payment(order_id=None):
         if status == "COMPLETED":
             print("Payment Done")
             return
-        # else: fall through and create a fresh payment link
     new_order_id, link = create_payment_link(access_token)
     print(f"Payment not completed. New Order ID: {new_order_id}")
     print(f"Pay here: {link}")
