@@ -14,7 +14,6 @@ VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN") #env
 APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")  #env
 GRAPH_URL = "https://graph.facebook.com/v19.0" 
 HEADERS_JSON = {"Authorization": f"Bearer {ACCESS_TOKEN}","Content-Type": "application/json",}  # application/json is a MIME type — a standardized label that tells whoever receives some data "here's the format this content is in, parse it accordingly."
-HEADERS_AUTH_ONLY = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
 REQUEST_TIMEOUT = 15
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 1.5
@@ -36,8 +35,11 @@ MAX_LIST_BUTTON_TEXT_LEN = 20
 MAX_EMOJI_LEN = 8  # generous cap; a single emoji is rarely more than a few codepoints
 RATE_LIMIT_MAX_REQUESTS = 20
 RATE_LIMIT_WINDOW_SECONDS = 60
-_request_log = defaultdict(deque)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+ # Creates a dictionary-like object where any key you access that doesn't exist yet automatically gets a deque() (double-ended queue) as its default value, instead of raising a KeyError.
+_request_log = defaultdict(deque) 
+ # Configures Python's root logger: level=logging.INFO means INFO, WARNING, ERROR, and CRITICAL messages all get shown (DEBUG is suppressed). The format string defines what each log line looks like — timestamp, then log level in brackets, then the message
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")  
+# Creates a named logger instance called "whatsapp_sender" rather than using the root logger directly. 
 log = logging.getLogger("whatsapp_sender")
 if not all([ACCESS_TOKEN, PHONE_NUMBER_ID, VERIFY_TOKEN, APP_SECRET]):
     log.warning("One or more required environment variables are missing "
