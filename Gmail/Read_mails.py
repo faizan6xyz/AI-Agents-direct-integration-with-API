@@ -228,4 +228,4 @@ def download_attachments(service, message_id: str, out_dir: str = "attachments")
 
 if __name__ == "__main__":
     service = get_service()
-    list_messages(service, query='is:unread', max_results=10)
+    list_messages(service, query='is:unread', max_results=10)   

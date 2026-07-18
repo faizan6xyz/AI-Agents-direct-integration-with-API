@@ -16,6 +16,7 @@ API_VERSION = os.environ.get("WHATSAPP_API_VERSION") #env
 GRAPH_URL = f"https://graph.facebook.com/{API_VERSION}" 
 HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
 DOWNLOAD_DIR = "Download"
+SAFE_ATTACHMENT_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.rtf', '.odt', '.ods', '.odp', '.csv','.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.heic','.mp3', '.wav', '.mp4', '.mov', '.avi', '.m4a','.json', '.xml', '.yaml', '.yml', '.md','.ttf', '.otf', '.woff', '.woff2',]
 REQUEST_TIMEOUT = 15          # seconds, for every outbound HTTP call
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 1.5      # seconds; doubles-ish each retry
@@ -81,6 +82,14 @@ def download_file(media_id: str, save_path: str, msg_type: str) -> str:
     # Step 1: get metadata (includes a temporary download URL + declared file_size)
     meta_resp = request_with_retry("GET", f"{GRAPH_URL}/{media_id}", headers=HEADERS)
     meta = meta_resp.json()
+    filename = meta.get('filename')
+    if not filename:
+        print("No filename returned by API — skipping")
+        return
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in SAFE_ATTACHMENT_EXTENSIONS :
+        print("File Type (Extenstion ) not Allowed")
+        return
     file_url = meta["url"]
     declared_size = meta.get("file_size")
     if max_bytes and declared_size and int(declared_size) > max_bytes:
