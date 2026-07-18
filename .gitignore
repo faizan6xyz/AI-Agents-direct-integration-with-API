@@ -5,3 +5,4 @@ __pycache__/
 .env
 example.env
 confi.env
+text.py

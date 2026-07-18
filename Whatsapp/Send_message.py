@@ -33,8 +33,6 @@ MAX_LIST_ROW_TITLE_LEN = 24
 MAX_LIST_ROW_DESC_LEN = 72
 MAX_LIST_BUTTON_TEXT_LEN = 20
 MAX_EMOJI_LEN = 8  # generous cap; a single emoji is rarely more than a few codepoints
-RATE_LIMIT_MAX_REQUESTS = 20
-RATE_LIMIT_WINDOW_SECONDS = 60
  # Creates a dictionary-like object where any key you access that doesn't exist yet automatically gets a deque() (double-ended queue) as its default value, instead of raising a KeyError.
 _request_log = defaultdict(deque) 
  # Configures Python's root logger: level=logging.INFO means INFO, WARNING, ERROR, and CRITICAL messages all get shown (DEBUG is suppressed). The format string defines what each log line looks like — timestamp, then log level in brackets, then the message
@@ -263,16 +261,6 @@ def require_api_key():
         return jsonify({"error": "Unauthorized"}), 401
     return None
 
-def check_rate_limit(ip: str) -> bool:
-    now = time.time()
-    q = _request_log[ip]
-    while q and now - q[0] > RATE_LIMIT_WINDOW_SECONDS:
-        q.popleft()
-    if len(q) >= RATE_LIMIT_MAX_REQUESTS:
-        return False
-    q.append(now)
-    return True
-
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     return "Verification successful", 200
@@ -287,9 +275,6 @@ def test_send():
     if auth_error:
         return auth_error
     client_ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    if not check_rate_limit(client_ip):
-        log.warning(f"Rate limit exceeded for {client_ip}")
-        return jsonify({"error": "Rate limit exceeded, slow down"}), 429
     data = request.get_json(silent=True)
     if not data or "phone" not in data:
         return jsonify({"error": "Please provide at least 'phone'"}), 400
@@ -345,7 +330,6 @@ def test_send():
 if __name__ == "__main__":
     # debug=True is convenient locally but should be False in production
     app.run(port=5000, debug=True)
-    
     
 '''   
     # Image
