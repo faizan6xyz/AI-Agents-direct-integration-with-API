@@ -12,6 +12,11 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE_NAME = "users"
 
+supabase.auth.sign_in_with_password({
+    "email": "Mail",
+    "password": "Password",
+})
+
 def create_row(data: dict[str, Any]) -> list[dict]:
     response = supabase.table(TABLE_NAME).insert(data).execute()
     return response.data
