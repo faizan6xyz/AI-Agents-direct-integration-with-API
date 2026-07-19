@@ -124,8 +124,6 @@ def razorpay_webhook():
             handle_payment_captured(event)
         elif event_type == "payment.failed":
             handle_payment_failed(event)
-        elif event_type == "refund.processed":
-            handle_refund_processed(event)
         else:
             logger.info("Unhandled event type=%s (ignored)", event_type)
     except Exception:
@@ -157,13 +155,6 @@ def handle_payment_failed(event):
     if order:
         order["status"] = "failed"
     # TODO: notify user, offer retry, etc.
-
-def handle_refund_processed(event):
-    refund_entity = event["payload"]["refund"]["entity"]
-    payment_id = refund_entity["payment_id"]
-    logger.info("Refund processed for payment=%s", payment_id)
-    # TODO: update order status to refunded
-
 
 if __name__ == "__main__":
     app.run(port=5000, debug=False)

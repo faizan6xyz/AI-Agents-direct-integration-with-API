@@ -7,9 +7,7 @@ from functools import wraps
 from flask import Flask, request, jsonify
 from supabase import create_client, Client
 from postgrest.exceptions import APIError
-logging.basicConfig(level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+logging.basicConfig(level=logging.INFO,format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",)
 logger = logging.getLogger("whatsapp_webhook")
 REQUIRED_ENV_VARS = [
     "SUPABASE_URL",
@@ -125,11 +123,9 @@ def save_message(wa_message_id, source, contact_id, direction,
     
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
-    """Meta's one-time verification handshake when you register the webhook."""
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
     if mode == "subscribe" and token == VERIFY_TOKEN:
         return challenge, 200
     logger.warning("Webhook verification failed — token mismatch")
@@ -159,7 +155,6 @@ def receive_message():
                         if msg_type == "text"
                         else None
                     )
-
                     result = save_message(
                         wa_message_id=wa_message_id,
                         source="whatsapp",
