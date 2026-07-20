@@ -12,7 +12,7 @@ logger = logging.getLogger("razorpay_payment")
 RAZORPAY_KEY_ID = os.environ["RAZORPAY_KEY_ID"]
 RAZORPAY_KEY_SECRET = os.environ["RAZORPAY_KEY_SECRET"]
 RAZORPAY_WEBHOOK_SECRET = os.environ["RAZORPAY_WEBHOOK_SECRET"]
-RAZORPAY_CURRENCY = os.environ.get("RAZORPAY_CURRENCY", "INR")
+RAZORPAY_CURRENCY = "INR"
 client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 app = Flask(__name__)
 orders_db = {}
@@ -39,7 +39,7 @@ def with_retry(max_attempts=3, base_delay=1.0, exceptions=(Exception,)):
     return decorator
 
 @with_retry(max_attempts=3, base_delay=1.0, exceptions=(razorpay.errors.ServerError,))
-def create_razorpay_order(amount_rupees: float, receipt: str, notes: dict = None):
+def create_razorpay_order(amount_rupees: float , receipt: str, notes: dict = None):
     amount_paise = int(round(amount_rupees * 100))
     order = client.order.create({"amount": amount_paise,
         "currency": RAZORPAY_CURRENCY,
