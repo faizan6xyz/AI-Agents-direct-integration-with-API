@@ -192,5 +192,32 @@ def paypal_webhook():
 def handle_unexpected_error(e):
     return jsonify({"error": "internal_error", "details": str(e)}), 500
 
+def run_payment_pipeline(amount: str = "20.00", currency: str = "USD") -> dict:
+    resp = requests.post(f"{BASE_URL}/api/payment/create",json={"amount": amount, "currency": currency},)
+    if resp.status_code != 200:
+        return {"success": False, "stage": "create", "error": resp.text}
+    data = resp.json()
+    order_id = data["order_id"]
+    approval_link = data["approval_link"]
+    print(f"Order created: {order_id}")
+    print(f"\nGo approve the payment here:\n{approval_link}\n")
+    input("Press Enter once you've approved the payment on PayPal...")
+    print("Checking order status...")
+    status_resp = requests.get(f"{BASE_URL}/api/payment/status/{order_id}")
+    if status_resp.status_code != 200:
+        return {"success": False, "stage": "status_check", "error": status_resp.text}
+    status = status_resp.json().get("status")
+    print(f"Status: {status}")
+    print("Capturing payment...")
+    capture_resp = requests.post(f"{BASE_URL}/api/payment/capture/{order_id}")
+    if capture_resp.status_code != 200:
+        return {"success": False, "stage": "capture", "error": capture_resp.text, "order_id": order_id}
+    capture_data = capture_resp.json()
+    if capture_data.get("status") == "Payment Done":
+        print("Payment completed successfully.")
+        return {"success": True, "order_id": order_id, "status": "Payment Done"}
+    else:
+        return {"success": False, "stage": "capture", "status": capture_data.get("status"), "order_id": order_id}
+
 if __name__ == "__main__":
     app.run(port=5000, debug=False)

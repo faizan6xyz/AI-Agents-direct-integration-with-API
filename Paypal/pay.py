@@ -31,3 +31,7 @@ for row in all_rows:
 
 if payment_status == False :
     print("Payment Not made ")
+    method = input("Paypal or UPI : ")
+
+    if method.lower() == "payapl" :
+        payemnt = create_payment()
