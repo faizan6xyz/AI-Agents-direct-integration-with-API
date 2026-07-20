@@ -15,12 +15,13 @@ CANCEL_URL = os.environ.get("CANCEL_URL", "https://example.com/cancel")
 BASE_URL = ("https://api-m.paypal.com"
     if os.environ.get("PAYPAL_ENV", "sandbox") == "live"
     else "https://api-m.sandbox.paypal.com")
+LOCAL_API_URL = "http://localhost:5000"
 _token_lock = threading.Lock()
 _token_cache = {"access_token": None, "expires_at": 0}
-_processed_webhook_events = {}          # event_id -> result, with timestamp for pruning
-_order_creation_cache = {}              # client_idempotency_key -> order response
+_processed_webhook_events = {}
+_order_creation_cache = {}
 _STORE_LOCK = threading.Lock()
-_STORE_TTL_SECONDS = 24 * 60 * 60        # prune entries older than 24h
+_STORE_TTL_SECONDS = 24 * 60 * 60
 
 class PayPalError(Exception):
     pass
@@ -61,8 +62,7 @@ def get_access_token():
     with _token_lock:
         if _token_cache["access_token"] and time.time() < _token_cache["expires_at"]:
             return _token_cache["access_token"]
-        resp = requests.post(
-            f"{BASE_URL}/v1/oauth2/token",
+        resp = requests.post(f"{BASE_URL}/v1/oauth2/token",
             headers={"Accept": "application/json"},
             data={"grant_type": "client_credentials"},
             auth=(CLIENT_ID, SECRET),
@@ -75,7 +75,8 @@ def get_access_token():
         return _token_cache["access_token"]
 
 def paypal_headers():
-    return {"Content-Type": "application/json","Authorization": f"Bearer {get_access_token()}",}
+    return {"Content-Type": "application/json",
+        "Authorization": f"Bearer {get_access_token()}",}
 
 @app.route("/api/payment/create", methods=["POST"])
 def create_payment():
@@ -87,8 +88,7 @@ def create_payment():
         _prune_store(_order_creation_cache)
         if idempotency_key and idempotency_key in _order_creation_cache:
             return jsonify(_order_creation_cache[idempotency_key]["response"])
-    payload = {
-        "intent": "CAPTURE",
+    payload = {"intent": "CAPTURE",
         "purchase_units": [{
             "amount": {"currency_code": currency, "value": amount}}],
         "application_context": {
@@ -110,7 +110,6 @@ def create_payment():
         with _STORE_LOCK:
             _order_creation_cache[idempotency_key] = {"response": result, "_ts": time.time()}
     return jsonify(result)
-
 
 @app.route("/api/payment/status/<order_id>", methods=["GET"])
 def payment_status(order_id):
@@ -144,7 +143,6 @@ def capture_payment(order_id):
         return jsonify({"error": "capture_failed", "details": resp.text}), 502
     data = resp.json()
     if data.get("status") == "COMPLETED":
-        # TODO: mark order as paid in your own database here.
         return jsonify({"status": "Payment Done"})
     return jsonify({"status": data.get("status")})
 
@@ -180,7 +178,6 @@ def paypal_webhook():
     event_type = event.get("event_type")
     try:
         if event_type == "PAYMENT.CAPTURE.COMPLETED":
-            # TODO: update your database — mark the related order as paid.
             pass
     except Exception as e:
         return jsonify({"error": "processing_failed", "details": str(e)}), 500
@@ -193,7 +190,8 @@ def handle_unexpected_error(e):
     return jsonify({"error": "internal_error", "details": str(e)}), 500
 
 def run_payment_pipeline(amount: str = "20.00", currency: str = "USD") -> dict:
-    resp = requests.post(f"{BASE_URL}/api/payment/create",json={"amount": amount, "currency": currency},)
+    resp = requests.post(f"{LOCAL_API_URL}/api/payment/create",
+        json={"amount": amount, "currency": currency},)
     if resp.status_code != 200:
         return {"success": False, "stage": "create", "error": resp.text}
     data = resp.json()
@@ -203,13 +201,13 @@ def run_payment_pipeline(amount: str = "20.00", currency: str = "USD") -> dict:
     print(f"\nGo approve the payment here:\n{approval_link}\n")
     input("Press Enter once you've approved the payment on PayPal...")
     print("Checking order status...")
-    status_resp = requests.get(f"{BASE_URL}/api/payment/status/{order_id}")
+    status_resp = requests.get(f"{LOCAL_API_URL}/api/payment/status/{order_id}")
     if status_resp.status_code != 200:
         return {"success": False, "stage": "status_check", "error": status_resp.text}
     status = status_resp.json().get("status")
     print(f"Status: {status}")
     print("Capturing payment...")
-    capture_resp = requests.post(f"{BASE_URL}/api/payment/capture/{order_id}")
+    capture_resp = requests.post(f"{LOCAL_API_URL}/api/payment/capture/{order_id}")
     if capture_resp.status_code != 200:
         return {"success": False, "stage": "capture", "error": capture_resp.text, "order_id": order_id}
     capture_data = capture_resp.json()
@@ -219,5 +217,13 @@ def run_payment_pipeline(amount: str = "20.00", currency: str = "USD") -> dict:
     else:
         return {"success": False, "stage": "capture", "status": capture_data.get("status"), "order_id": order_id}
 
+def _start_server_in_background():
+    thread = threading.Thread(target=lambda: app.run(port=5000, debug=False, use_reloader=False),
+        daemon=True,)
+    thread.start()
+    time.sleep(1.5)
+
 if __name__ == "__main__":
-    app.run(port=5000, debug=False)
+    _start_server_in_background()
+    result = run_payment_pipeline(amount="20.00")
+    print(result)
