@@ -9,19 +9,20 @@ from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+import requests
 load_dotenv()
 logging.basicConfig( level=logging.INFO , format="%(asctime)s %(levelname)s %(name)s: %(message)s", )
 logger = logging.getLogger("payment")
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024  # 256KB request body cap (item #12)
-limiter = Limiter( key_func=get_remote_address , app=app , default_limits=[] , storage_uri=os.environ.get("RATE_LIMIT_STORAGE_URI", "memory://") , )
+limiter = Limiter( key_func=get_remote_address , app=app , default_limits=[] , storage_uri=os.environ.get("RATE_LIMIT_STORAGE_URI") , )
 KEY_ID = os.environ["RAZORPAY_KEY_ID"]
 KEY_SECRET = os.environ["RAZORPAY_KEY_SECRET"]
 WEBHOOK_SECRET = os.environ["RAZORPAY_WEBHOOK_SECRET"]
 BASE_URL = "https://api.razorpay.com/v1"
 AUTH = (KEY_ID, KEY_SECRET)
 DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
-_STORE_TTL_SECONDS = 24 * 60 * 60
+_STORE_TTL_SECONDS = 18 * 60 * 60
 PRICE_TABLE_PAISE = { "basic_monthly": 20000, }
 ALLOWED_CURRENCIES = {"INR"}
 
@@ -71,7 +72,6 @@ def _release_idempotency_claim(idempotency_key: str):
         conn.commit()
 
 def _request(method, path, **kwargs):
-    import requests
     url = f"{BASE_URL}{path}"
     last_exc = None
     for attempt in range(3):
@@ -100,7 +100,7 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
 
 @app.route("/checkout")
 def checkout_page():
-    plan_id = request.args.get("plan_id", "basic_monthly")
+    plan_id = request.args.get("plan_id" , "basic_monthly")
     if plan_id not in PRICE_TABLE_PAISE:
         return jsonify({"error": "invalid_plan_id"}), 400
     return render_template("checkout.html", plan_id=plan_id, key_id=KEY_ID)
