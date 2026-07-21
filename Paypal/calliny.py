@@ -3,8 +3,8 @@ import threading
 import requests
 import paypal_payments as pp
 LOCAL_API_URL = "http://localhost:5000"
-DEMO_CART_ID = "demo-cart-1"
-DEMO_USER_ID = "demo-user-1"
+DEMO_CART_ID = "demo-cart-1" 
+DEMO_USER_ID = "demo-user-1" # it wuld be fetches by the db 
 DEMO_AMOUNT = "20.00"
 DEMO_CURRENCY = "USD"
 
@@ -12,6 +12,13 @@ def _start_server_in_background():
     thread = threading.Thread( target=lambda: pp.app.run(port=5000, debug=False, use_reloader=False), daemon=True )
     thread.start()
     time.sleep(1.5)
+
+def seed_demo_cart_via_api(cart_id: str, user_id: str, amount: str, currency: str) -> dict:
+    resp = requests.post(f"{LOCAL_API_URL}/api/demo/seed-cart", 
+                         json={"cart_id": cart_id, "user_id": user_id, "amount": amount, "currency": currency}, )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to seed demo cart: {resp.status_code} {resp.text}")
+    return resp.json()
 
 def run_payment_pipeline(cart_id: str = DEMO_CART_ID, user_id: str = DEMO_USER_ID) -> dict:
     session = requests.Session()
@@ -45,6 +52,6 @@ def run_payment_pipeline(cart_id: str = DEMO_CART_ID, user_id: str = DEMO_USER_I
 
 if __name__ == "__main__":
     _start_server_in_background()
-    pp.seed_demo_cart(DEMO_CART_ID, DEMO_USER_ID, DEMO_AMOUNT, DEMO_CURRENCY)
+    seed_demo_cart_via_api(DEMO_CART_ID, DEMO_USER_ID, DEMO_AMOUNT, DEMO_CURRENCY)
     result = run_payment_pipeline()
     print(result)
