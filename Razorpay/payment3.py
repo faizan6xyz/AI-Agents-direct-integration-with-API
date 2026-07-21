@@ -1,27 +1,29 @@
 import os
 import time
+import json
 import hmac
 import hashlib
 import logging
 import sqlite3
-import threading
-import requests
-from decimal import Decimal, ROUND_HALF_UP
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",)
+logging.basicConfig(level=logging.INFO , format="%(asctime)s %(levelname)s %(name)s: %(message)s", )
 logger = logging.getLogger("payment")
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024  # 256KB request body cap
 KEY_ID = os.environ["RAZORPAY_KEY_ID"]
 KEY_SECRET = os.environ["RAZORPAY_KEY_SECRET"]
-WEBHOOK_SECRET = os.environ.get("RAZORPAY_WEBHOOK_SECRET")
+WEBHOOK_SECRET = os.environ["RAZORPAY_WEBHOOK_SECRET"]
 BASE_URL = "https://api.razorpay.com/v1"
-LOCAL_API_URL = "http://localhost:5000"
 AUTH = (KEY_ID, KEY_SECRET)
 DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
-_STORE_TTL_SECONDS = 18 * 60 * 60
-PRICE_TABLE_PAISE = {"basic_monthly": 20000,     } # 2000
+_STORE_TTL_SECONDS = 24 * 60 * 60
+PRICE_TABLE_PAISE = {
+    "basic_monthly": 20000,      # ₹20.00
+    "pro_monthly": 49900,       # ₹499.00
+    "pro_yearly": 499900,       # ₹4999.00
+}
 ALLOWED_CURRENCIES = {"INR"}
 
 class RazorpayError(Exception):
@@ -35,8 +37,8 @@ def _get_db():
 
 def _init_db():
     with _get_db() as conn:
-        conn.execute(""" CREATE TABLE IF NOT EXISTS processed_webhook_events (event_id   TEXT PRIMARY KEY , event_type TEXT , created_at REAL NOT NULL)""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS order_creation_cache (idempotency_key TEXT PRIMARY KEY , response_json   TEXT NOT NULL , created_at REAL NOT NULL )""")
+        conn.execute(""" CREATE TABLE IF NOT EXISTS processed_webhook_events ( event_id TEXT PRIMARY KEY,event_type TEXT,created_at REAL NOT NULL ) """)
+        conn.execute(""" CREATE TABLE IF NOT EXISTS order_creation_cache ( idempotency_key TEXT PRIMARY KEY, response_json TEXT NOT NULL,created_at REAL NOT NULL ) """ )
         conn.commit()
 
 def _prune_table(conn, table: str):
@@ -44,6 +46,7 @@ def _prune_table(conn, table: str):
     conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))
 
 def _request(method, path, **kwargs):
+    import requests
     url = f"{BASE_URL}{path}"
     last_exc = None
     for attempt in range(3):
@@ -70,9 +73,12 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
     expected = hmac.new(WEBHOOK_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature or "")
 
-def _rupees_to_paise(rupees) -> int:
-    d = Decimal(str(rupees)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return int(d * 100)
+@app.route("/checkout")
+def checkout_page():
+    plan_id = request.args.get("plan_id", "basic_monthly")
+    if plan_id not in PRICE_TABLE_PAISE:
+        return jsonify({"error": "invalid_plan_id"}), 400
+    return render_template("checkout.html", plan_id=plan_id, key_id=KEY_ID)
 
 @app.route("/api/payment/create", methods=["POST"])
 def create_payment():
@@ -80,7 +86,7 @@ def create_payment():
     plan_id = body.get("plan_id")
     if not plan_id or plan_id not in PRICE_TABLE_PAISE:
         return jsonify({"error": "invalid_plan_id"}), 400
-    amount_paise = PRICE_TABLE_PAISE[plan_id]  # already an int, no float math (item #3)
+    amount_paise = PRICE_TABLE_PAISE[plan_id]
     currency = body.get("currency", "INR")
     if currency not in ALLOWED_CURRENCIES:
         return jsonify({"error": "unsupported_currency"}), 400
@@ -90,14 +96,10 @@ def create_payment():
         _prune_table(conn, "order_creation_cache")
         conn.commit()
         if idempotency_key:
-            row = conn.execute("SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?",(idempotency_key,),).fetchone()
+            row = conn.execute( "SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?", (idempotency_key,),).fetchone()
             if row:
-                import json
                 return jsonify(json.loads(row[0]))
-    payload = {"amount": amount_paise,
-        "currency": currency,
-        "receipt": receipt,
-        "payment_capture": 1,}
+    payload = { "amount": amount_paise, "currency": currency, "receipt": receipt, "payment_capture": 1, }
     try:
         resp = _request("POST", "/orders", json=payload)
     except RazorpayError as e:
@@ -107,15 +109,10 @@ def create_payment():
         logger.error("order_creation_failed (razorpay %s): %s", resp.status_code, resp.text)
         return jsonify({"error": "order_creation_failed", "details": resp.text}), 502
     order = resp.json()
-    result = {
-        "order_id": order["id"],
-        "amount": order["amount"],
-        "currency": order["currency"],
-        "key_id": KEY_ID,}
+    result = {"order_id": order["id"],"amount": order["amount"],"currency": order["currency"],"key_id": KEY_ID,}
     if idempotency_key:
-        import json
         with _get_db() as conn:
-            conn.execute("""INSERT OR REPLACE INTO order_creation_cache (idempotency_key, response_json, created_at)VALUES (?, ?, ?)""",(idempotency_key, json.dumps(result), time.time()),)
+            conn.execute(""" INSERT OR REPLACE INTO order_creation_cache (idempotency_key, response_json, created_at) VALUES (?, ?, ?)""",(idempotency_key, json.dumps(result), time.time()),)
             conn.commit()
     return jsonify(result)
 
@@ -128,7 +125,7 @@ def verify_payment():
     if not all([order_id, payment_id, signature]):
         return jsonify({"error": "missing_fields"}), 400
     if not verify_payment_signature(order_id, payment_id, signature):
-        logger.warning("invalid_signature for order_id=%s payment_id=%s", order_id, payment_id)
+        logger.warning("invalid_signature order_id=%s payment_id=%s", order_id, payment_id)
         return jsonify({"error": "invalid_signature"}), 400
     try:
         resp = _request("GET", f"/payments/{payment_id}")
@@ -170,11 +167,8 @@ def capture_payment(payment_id):
         amount_paise = status_resp.json().get("amount") if status_resp.status_code == 200 else None
         currency = status_resp.json().get("currency", "INR") if status_resp.status_code == 200 else "INR"
         if body.get("amount") is not None:
-            logger.warning("capture_payment received client-supplied amount for payment_id=%s; ignoring it",
-                payment_id,)
-        resp = _request("POST",
-            f"/payments/{payment_id}/capture",
-            json={"amount": amount_paise, "currency": currency},)
+            logger.warning("capture_payment received client-supplied amount for payment_id=%s; ignoring it", payment_id,)
+        resp = _request("POST", f"/payments/{payment_id}/capture", json={"amount": amount_paise, "currency": currency},)
     except RazorpayError as e:
         logger.error("razorpay_unavailable during capture: %s", e)
         return jsonify({"error": "razorpay_unavailable", "details": str(e)}), 503
@@ -190,20 +184,20 @@ def _handle_payment_captured(event: dict):
     payment_entity = event.get("payload", {}).get("payment", {}).get("entity", {})
     payment_id = payment_entity.get("id")
     logger.info("payment.captured received for payment_id=%s", payment_id)
-    # TODO: update subscription/order status, send confirmation email, etc.
+    # TODO: mark order paid, provision access, send confirmation email.
 
 def _handle_payment_failed(event: dict):
     payment_entity = event.get("payload", {}).get("payment", {}).get("entity", {})
     payment_id = payment_entity.get("id")
     error_desc = payment_entity.get("error_description")
     logger.warning("payment.failed for payment_id=%s: %s", payment_id, error_desc)
-    # TODO: notify the user, trigger dunning/retry flow, etc.
+    # TODO: notify user, trigger dunning/retry flow.
 
 def _handle_order_paid(event: dict):
     order_entity = event.get("payload", {}).get("order", {}).get("entity", {})
     order_id = order_entity.get("id")
     logger.info("order.paid received for order_id=%s", order_id)
-    # TODO: reconcile order status, fulfil the order, etc.
+    # TODO: reconcile order status, fulfil order.
 
 _WEBHOOK_HANDLERS = {"payment.captured": _handle_payment_captured,
     "payment.failed": _handle_payment_failed,
@@ -227,8 +221,7 @@ def razorpay_webhook():
         _prune_table(conn, "processed_webhook_events")
         conn.commit()
         try:
-            conn.execute("INSERT INTO processed_webhook_events (event_id, event_type, created_at) "
-                "VALUES (?, ?, ?)",(event_id, event_type, time.time()),)
+            conn.execute("INSERT INTO processed_webhook_events (event_id, event_type, created_at) " "VALUES (?, ?, ?)",(event_id, event_type, time.time()),)
             conn.commit()
         except sqlite3.IntegrityError:
             return jsonify({"received": True, "duplicate": True}), 200
@@ -241,53 +234,22 @@ def razorpay_webhook():
     except Exception as e:
         logger.error("processing_failed for event_id=%s: %s", event_id, e)
         with _get_db() as conn:
-            conn.execute("DELETE FROM processed_webhook_events WHERE event_id = ?",(event_id,),)
+            conn.execute("DELETE FROM processed_webhook_events WHERE event_id = ?", (event_id,))
             conn.commit()
         return jsonify({"error": "processing_failed", "details": str(e)}), 500
     return jsonify({"received": True}), 200
+
+@app.route("/healthz")
+def healthz():
+    return jsonify({"ok": True})
 
 @app.errorhandler(Exception)
 def handle_unexpected_error(e):
     logger.exception("Unhandled exception")
     return jsonify({"error": "internal_error", "details": str(e)}), 500
 
-def run_payment_pipeline(plan_id: str = "basic_monthly", currency: str = "INR") -> dict:
-    resp = requests.post(f"{LOCAL_API_URL}/api/payment/create",
-        json={"plan_id": plan_id, "currency": currency},)
-    if resp.status_code != 200:
-        return {"success": False, "stage": "create", "error": resp.text}
-    data = resp.json()
-    order_id = data["order_id"]
-    print(f"Order created: {order_id}")
-    print(f"\nOpen Razorpay Checkout on the frontend with:")
-    print(f"  key: {data['key_id']}")
-    print(f"  order_id: {order_id}")
-    print(f"  amount: {data['amount']}  currency: {data['currency']}\n")
-    payment_id = input("Paste razorpay_payment_id after checkout completes: ").strip()
-    signature = input("Paste razorpay_signature: ").strip()
-    print("Verifying payment...")
-    verify_resp = requests.post(f"{LOCAL_API_URL}/api/payment/verify",
-        json={"razorpay_order_id": order_id,
-            "razorpay_payment_id": payment_id,
-            "razorpay_signature": signature,},)
-    if verify_resp.status_code != 200:
-        return {"success": False, "stage": "verify", "error": verify_resp.text, "order_id": order_id}
-    verify_data = verify_resp.json()
-    if verify_data.get("status") == "Payment Done":
-        print("Payment completed successfully.")
-        return {"success": True, "order_id": order_id, "payment_id": payment_id, "status": "Payment Done"}
-    else:
-        return {"success": False, "stage": "verify", "status": verify_data.get("status"), "order_id": order_id}
-
-def _start_server_in_background():
-    thread = threading.Thread(target=lambda: app.run(port=5000, debug=False, use_reloader=False),
-        daemon=True,)
-    thread.start()
-    time.sleep(1.5)
-
 _init_db()
-
+# Local dev only. In production run:
+#   gunicorn -w 4 -b 0.0.0.0:5000 app:app
 if __name__ == "__main__":
-    _start_server_in_background()
-    result = run_payment_pipeline(plan_id="basic_monthly")
-    print(result)
+    app.run(port=5000, debug=False)
