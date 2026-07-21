@@ -37,27 +37,33 @@ def _get_db():
 
 def _init_db():
     with _get_db() as conn:
-        conn.execute(""" CREATE TABLE IF NOT EXISTS processed_webhook_events ( 
-                event_id   TEXT PRIMARY KEY,
-                event_type TEXT,
-                created_at REAL NOT NULL )""" )
-        conn.execute(""" CREATE TABLE IF NOT EXISTS order_creation_cache (
-                idempotency_key TEXT PRIMARY KEY,
-                response_json   TEXT,
-                created_at      REAL NOT NULL )""")
-        conn.execute(""" CREATE TABLE IF NOT EXISTS orders (
-                order_id   TEXT PRIMARY KEY,
-                plan_id    TEXT,
-                amount     INTEGER,
-                currency   TEXT,
-                status     TEXT NOT NULL DEFAULT 'created',
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL )""")
-        conn.execute(""" CREATE TABLE IF NOT EXISTS verify_cache (
-                payment_id  TEXT PRIMARY KEY,
-                response_json TEXT NOT NULL,
-                created_at  REAL NOT NULL )""")
-        conn.commit()
+        conn.executescript(""" CREATE TABLE IF NOT EXISTS processed_webhook_events (
+                                event_id   TEXT PRIMARY KEY,
+                                event_type TEXT,
+                                created_at REAL NOT NULL );
+                            
+                            CREATE TABLE IF NOT EXISTS order_creation_cache (
+                                idempotency_key TEXT PRIMARY KEY,
+                                response_json   TEXT,
+                                created_at      REAL NOT NULL ); 
+                                
+                            CREATE TABLE IF NOT EXISTS orders (
+                                order_id   TEXT PRIMARY KEY,
+                                plan_id    TEXT,
+                                amount     INTEGER,
+                                currency   TEXT,
+                                status     TEXT NOT NULL DEFAULT 'created',
+                                created_at REAL NOT NULL,
+                                updated_at REAL NOT NULL );
+                                
+                            CREATE TABLE IF NOT EXISTS verify_cache (
+                                payment_id  TEXT PRIMARY KEY,
+                                response_json TEXT NOT NULL,
+                                created_at  REAL NOT NULL );
+                                
+                            CREATE INDEX IF NOT EXISTS idx_processed_created ON processed_webhook_events(created_at);
+                            CREATE INDEX IF NOT EXISTS idx_ordercache_created ON order_creation_cache(created_at);
+                            CREATE INDEX IF NOT EXISTS idx_verify_created ON verify_cache(created_at);""")
         
 def _prune_table(conn, table: str):
     cutoff = time.time() - _STORE_TTL_SECONDS
