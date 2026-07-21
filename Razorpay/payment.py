@@ -14,11 +14,18 @@ load_dotenv()
 logging.basicConfig( level=logging.INFO , format="%(asctime)s %(levelname)s %(name)s: %(message)s", )
 logger = logging.getLogger("payment")
 app = Flask(__name__)
+def _require(key):
+    val = os.environ.get(key)
+    if not val:
+        raise RuntimeError(f"Missing required environment variable: {key}")
+    return val
+
+KEY_ID = _require("RAZORPAY_KEY_ID")
+KEY_SECRET = _require("RAZORPAY_KEY_SECRET")
+WEBHOOK_SECRET = _require("RAZORPAY_WEBHOOK_SECRET")
+RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024  # 256KB request body cap (item #12)
-limiter = Limiter( key_func=get_remote_address , app=app , default_limits=[] , storage_uri=os.environ.get("RATE_LIMIT_STORAGE_URI") , )
-KEY_ID = os.environ["RAZORPAY_KEY_ID"]
-KEY_SECRET = os.environ["RAZORPAY_KEY_SECRET"]
-WEBHOOK_SECRET = os.environ["RAZORPAY_WEBHOOK_SECRET"]
+limiter = Limiter( key_func=get_remote_address , app=app , default_limits=[] , storage_uri=RATE_LIMIT_STORAGE_URI , )
 BASE_URL = "https://api.razorpay.com/v1"
 AUTH = (KEY_ID, KEY_SECRET)
 DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
@@ -327,7 +334,13 @@ def razorpay_webhook():
 
 @app.route("/healthz")
 def healthz():
-    return jsonify({"ok": True})
+    try:
+        with _get_db() as conn:
+            conn.execute("SELECT 1").fetchone()
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("healthz_failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 503
 
 @app.errorhandler(Exception)
 def handle_unexpected_error(e):
