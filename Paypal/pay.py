@@ -3,6 +3,7 @@ from typing import Any, Optional
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from Paypal.optimzied import run_payment_pipeline
 
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -18,7 +19,6 @@ try:
 except Exception:
     res = supabase.auth.sign_up({"email": mail, "password": passw})
 
- 
 def get_all_rows(limit: int = 100) -> list[dict]:
     response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
     return response.data
@@ -34,4 +34,5 @@ if payment_status == False :
     method = input("Paypal or UPI : ")
 
     if method.lower() == "payapl" :
-        payemnt = create_payment()
+        result = run_payment_pipeline(amount="20.00")
+        print(result)
