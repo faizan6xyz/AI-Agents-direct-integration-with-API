@@ -5,9 +5,12 @@ import json
 import uuid
 import base64
 import zlib
+import hmac
+import hashlib
 import sqlite3
 import logging
 import threading
+from urllib.parse import urlparse
 from decimal import Decimal, InvalidOperation
 from contextlib import contextmanager
 import functools
@@ -31,16 +34,18 @@ CLIENT_ID = _require("PAYPAL_CLIENT_ID")
 SECRET = _require("PAYPAL_SECRET")
 WEBHOOK_ID = _require("PAYPAL_WEBHOOK_ID")
 FLASK_SECRET_KEY = _require("FLASK_SECRET_KEY")
+DEMO_LOGIN_SECRET = _require("DEMO_LOGIN_SECRET")
 RETURN_URL = os.environ.get("RETURN_URL", "https://example.com/success")
 CANCEL_URL = os.environ.get("CANCEL_URL", "https://example.com/cancel")
 DB_PATH = os.environ.get("DB_PATH", "payments.db")
-RATE_LIMIT_STORAGE_URI = os.environ.get("RATE_LIMIT_STORAGE_URI")
+RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 PAYPAL_ENV = os.environ.get("PAYPAL_ENV", "sandbox")
 BASE_URL = ("https://api-m.paypal.com" if PAYPAL_ENV == "live" else "https://api-m.sandbox.paypal.com")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("paypal_app")
 ISO_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 TRUSTED_CERT_HOSTS = ("api.paypal.com", "api.sandbox.paypal.com")
+ACTIVE_ORDER_STATUSES = ("CREATED", "COMPLETED")
 
 class PayPalError(Exception):
     pass
@@ -86,6 +91,7 @@ def init_db():
                 
                         CREATE TABLE IF NOT EXISTS idempotency_cache (
                             idempotency_key TEXT PRIMARY KEY,
+                            request_hash TEXT NOT NULL,
                             response TEXT NOT NULL,
                             created_at REAL NOT NULL);
                             
@@ -94,7 +100,8 @@ def init_db():
                             created_at REAL NOT NULL);
                             
                         CREATE INDEX IF NOT EXISTS idx_idem_created ON idempotency_cache(created_at);
-                        CREATE INDEX IF NOT EXISTS idx_webhook_created ON webhook_events(created_at); """)
+                        CREATE INDEX IF NOT EXISTS idx_webhook_created ON webhook_events(created_at);
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_active_cart ON orders(cart_id) WHERE status IN ('CREATED', 'COMPLETED'); """)
 
 def seed_demo_cart(cart_id, user_id, amount, currency):
     with get_conn() as conn:
@@ -105,10 +112,24 @@ def get_cart(cart_id):
         row = conn.execute("SELECT * FROM carts WHERE cart_id = ?", (cart_id,)).fetchone()
         return dict(row) if row else None
 
+def get_active_order_for_cart(cart_id):
+    with get_conn() as conn:
+        placeholders = ",".join("?" for _ in ACTIVE_ORDER_STATUSES)
+        row = conn.execute(
+            f"SELECT * FROM orders WHERE cart_id = ? AND status IN ({placeholders}) "
+            f"ORDER BY created_at DESC LIMIT 1",
+            (cart_id, *ACTIVE_ORDER_STATUSES),
+        ).fetchone()
+        return dict(row) if row else None
+
 def save_order(paypal_order_id, cart_id, user_id, amount, currency):
     with get_conn() as conn:
-        conn.execute( "INSERT INTO orders (paypal_order_id, cart_id, user_id, amount, currency, created_at)  VALUES (?, ?, ?, ?, ?, ?)",(paypal_order_id, cart_id, user_id, amount, currency, time.time()),)
-
+        try:
+            conn.execute( "INSERT INTO orders (paypal_order_id, cart_id, user_id, amount, currency, created_at)  VALUES (?, ?, ?, ?, ?, ?)",(paypal_order_id, cart_id, user_id, amount, currency, time.time()),)
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        
 def get_order(paypal_order_id):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM orders WHERE paypal_order_id = ?", (paypal_order_id,)).fetchone()
@@ -119,25 +140,39 @@ def mark_order_paid(paypal_order_id):
         cur = conn.execute("UPDATE orders SET paid = 1, status = 'COMPLETED' WHERE paypal_order_id = ? AND paid = 0", (paypal_order_id,),)
         return cur.rowcount == 1
 
-def get_idempotent_response(key):
-    with get_conn() as conn:
-        row = conn.execute("SELECT response FROM idempotency_cache WHERE idempotency_key = ?", (key,) ).fetchone()
-        return json.loads(row["response"]) if row else None
+def _hash_request(payload):
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
-def save_idempotent_response(key, response):
+def get_idempotent_response(key, request_hash):
     with get_conn() as conn:
-        conn.execute( "INSERT OR IGNORE INTO idempotency_cache (idempotency_key, response, created_at) VALUES (?, ?, ?)", (key, json.dumps(response), time.time()), )
+        row = conn.execute(
+            "SELECT response, request_hash FROM idempotency_cache WHERE idempotency_key = ?", (key,)
+        ).fetchone()
+        if not row:
+            return None, False
+        if row["request_hash"] != request_hash:
+            return None, True
+        return json.loads(row["response"]), False
+
+def save_idempotent_response(key, request_hash, response):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO idempotency_cache (idempotency_key, request_hash, response, created_at) VALUES (?, ?, ?, ?)",
+            (key, request_hash, json.dumps(response), time.time()),
+        )
 
 def is_duplicate_webhook_event(event_id):
     with get_conn() as conn:
         row = conn.execute("SELECT 1 FROM webhook_events WHERE event_id = ?", (event_id,)).fetchone()
-        if row:
-            return True
+        return row is not None
+
+def record_webhook_event(event_id):
+    with get_conn() as conn:
         try:
             conn.execute( "INSERT INTO webhook_events (event_id, created_at) VALUES (?, ?)", (event_id, time.time()), )
-            return False
-        except sqlite3.IntegrityError:
             return True
+        except sqlite3.IntegrityError:
+            return False
 
 def prune_old_entries(max_age_seconds=24 * 60 * 60):
     cutoff = time.time() - max_age_seconds
@@ -200,11 +235,11 @@ def _get_cert(cert_url):
         cached = _cert_cache.get(cert_url)
         if cached and time.time() < cached["expires_at"]:
             return cached["cert"]
-    host = cert_url.split("/")[2] if "://" in cert_url else ""
-    if host not in TRUSTED_CERT_HOSTS:
-        raise PayPalError(f"Untrusted cert_url host: {host}")
+    parsed = urlparse(cert_url)
+    if parsed.scheme != "https" or parsed.hostname not in TRUSTED_CERT_HOSTS:
+        raise PayPalError(f"Untrusted cert_url host: {parsed.hostname}")
     resp = requests.get(cert_url, timeout=10)
-    if resp.status_code != 200:
+    if resp.status_code != 200: 
         raise PayPalError(f"Could not fetch webhook cert: {resp.status_code}")
     cert = x509.load_pem_x509_certificate(resp.content)
     with _cert_lock:
@@ -273,11 +308,15 @@ limiter = Limiter(get_remote_address, app=app, storage_uri=RATE_LIMIT_STORAGE_UR
 init_db()
 
 @app.route("/api/auth/demo-login", methods=["POST"])
+@limiter.limit("10 per minute")
 def demo_login():
     body = request.get_json(silent=True) or {}
     user_id = body.get("user_id")
+    provided_secret = request.headers.get("X-Demo-Secret", "")
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
+    if not hmac.compare_digest(provided_secret, DEMO_LOGIN_SECRET):
+        return jsonify({"error": "unauthorized"}), 401
     session["user_id"] = user_id
     return jsonify({"logged_in_as": user_id})
 
@@ -302,10 +341,16 @@ def create_payment():
     if not ISO_CURRENCY_RE.match(currency):
         return jsonify({"error": "invalid_currency"}), 400
     idempotency_key = request.headers.get("Idempotency-Key")
+    request_hash = _hash_request({"cart_id": cart_id, "user_id": current_user_id()})
     if idempotency_key:
-        cached = get_idempotent_response(idempotency_key)
+        cached, mismatch = get_idempotent_response(idempotency_key, request_hash)
+        if mismatch:
+            return jsonify({"error": "idempotency_key_reused_with_different_request"}), 409
         if cached:
             return jsonify(cached)
+    existing_order = get_active_order_for_cart(cart_id)
+    if existing_order:
+        return jsonify({"error": "order_already_exists", "order_id": existing_order["paypal_order_id"]}), 409
     payload = {"intent": "CAPTURE",
         "purchase_units": [{
             "amount": {"currency_code": currency, "value": amount},
@@ -326,10 +371,13 @@ def create_payment():
         return jsonify({"error": "order_creation_failed"}), 502
     order = resp.json()
     approval_link = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
-    save_order(order["id"], cart_id, current_user_id(), amount, currency)
+    if not save_order(order["id"], cart_id, current_user_id(), amount, currency):
+        logger.warning("Race detected creating order for cart %s, PayPal order %s orphaned", cart_id, order["id"])
+        existing_order = get_active_order_for_cart(cart_id)
+        return jsonify({"error": "order_already_exists", "order_id": existing_order["paypal_order_id"] if existing_order else None}), 409
     result = {"order_id": order["id"], "approval_link": approval_link}
     if idempotency_key:
-        save_idempotent_response(idempotency_key, result)
+        save_idempotent_response(idempotency_key, request_hash, result)
     logger.info("Order created: %s for user %s", order["id"], current_user_id())
     return jsonify(result)
 
@@ -402,6 +450,8 @@ def paypal_webhook():
     if not verified:
         logger.warning("Webhook signature verification failed for event %s", event_id)
         return jsonify({"error": "invalid_signature"}), 400
+    if not record_webhook_event(event_id):
+        return jsonify({"received": True, "duplicate": True}), 200
     event_type = event.get("event_type")
     if event_type == "PAYMENT.CAPTURE.COMPLETED":
         resource = event.get("resource", {})
