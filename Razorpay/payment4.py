@@ -114,9 +114,19 @@ def create_payment():
         _prune_table(conn, "order_creation_cache")
         conn.commit()
         if idempotency_key:
-            row = conn.execute( "SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?", (idempotency_key,),).fetchone()
+            row = conn.execute("SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?",
+                               (idempotency_key,),).fetchone()
             if row:
+                if row[0] is None:
+                    return jsonify({"error": "request_in_progress"}), 409
                 return jsonify(json.loads(row[0]))
+            try:
+                conn.execute("INSERT INTO order_creation_cache (idempotency_key, response_json, created_at) "
+                             "VALUES (?, NULL, ?)",
+                             (idempotency_key, time.time()),)
+                conn.commit()
+            except sqlite3.IntegrityError:
+                return jsonify({"error": "request_in_progress"}), 409
     payload = {"amount": amount_paise , "currency": currency , "receipt": receipt , "payment_capture": 1, }
     try:
         resp = _request("POST", "/orders", json=payload)
@@ -137,10 +147,8 @@ def create_payment():
         conn.commit()
     if idempotency_key:
         with _get_db() as conn:
-            conn.execute(""" INSERT OR REPLACE INTO order_creation_cache 
-                         (idempotency_key, response_json, created_at) 
-                         VALUES (?, ?, ?) """,
-                         (idempotency_key, json.dumps(result), time.time()),)
+            conn.execute("UPDATE order_creation_cache SET response_json = ?, created_at = ? WHERE idempotency_key = ?",
+                (json.dumps(result), time.time(), idempotency_key),)
             conn.commit()
     return jsonify(result)
 
@@ -204,8 +212,13 @@ def capture_payment(payment_id):
         status_resp = _request("GET", f"/payments/{payment_id}")
         if status_resp.status_code == 200 and status_resp.json().get("status") == "captured":
             return jsonify({"status": "Payment Done"})
-        amount_paise = status_resp.json().get("amount") if status_resp.status_code == 200 else None
-        currency = status_resp.json().get("currency", "INR") if status_resp.status_code == 200 else "INR"
+        if status_resp.status_code == 404:
+            return jsonify({"error": "payment_not_found"}), 404
+        if status_resp.status_code != 200:
+            logger.error("capture_status_check_failed (%s): %s", status_resp.status_code, status_resp.text)
+            return jsonify({"error": "capture_status_check_failed", "details": status_resp.text}), 502
+        amount_paise = status_resp.json().get("amount")
+        currency = status_resp.json().get("currency", "INR")
         if body.get("amount") is not None:
             logger.warning( "capture_payment received client-supplied amount for payment_id=%s; ignoring it", payment_id , )
         resp = _request( "POST" , f"/payments/{payment_id}/capture" , json={"amount": amount_paise, "currency": currency}, )
