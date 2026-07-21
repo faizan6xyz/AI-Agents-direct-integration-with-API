@@ -68,13 +68,24 @@ def _init_db():
                                 response_json TEXT NOT NULL,
                                 created_at  REAL NOT NULL );
                                 
+                            CREATE TRIGGER IF NOT EXISTS processed_webhook_events_clean AFTER INSERT ON processed_webhook_events
+                                BEGIN
+                                    DELETE FROM processed_webhook_events WHERE created_at < (strftime('%s', 'now') - 86400);
+                                END;
+                                
+                            CREATE TRIGGER IF NOT EXISTS order_creation_cache_clean AFTER INSERT ON order_creation_cache
+                                BEGIN
+                                    DELETE FROM order_creation_cache WHERE created_at < (strftime('%s', 'now') - 86400);
+                                END;
+                                
+                            CREATE TRIGGER IF NOT EXISTS verify_cache_clean AFTER INSERT ON verify_cache
+                                BEGIN
+                                    DELETE FROM verify_cache WHERE created_at < (strftime('%s', 'now') - 86400);
+                                END;
+                                
                             CREATE INDEX IF NOT EXISTS idx_processed_created ON processed_webhook_events(created_at);
                             CREATE INDEX IF NOT EXISTS idx_ordercache_created ON order_creation_cache(created_at);
                             CREATE INDEX IF NOT EXISTS idx_verify_created ON verify_cache(created_at);""")
-        
-def _prune_table(conn, table: str):
-    cutoff = time.time() - _STORE_TTL_SECONDS
-    conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))
 
 def _release_idempotency_claim(idempotency_key: str):
     if not idempotency_key:
@@ -132,7 +143,6 @@ def create_payment():
     receipt = body.get("receipt") or f"rcpt_{int(time.time() * 1000)}"
     idempotency_key = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
     with _get_db() as conn:
-        _prune_table(conn, "order_creation_cache")
         conn.commit()
         if idempotency_key:
             row = conn.execute("SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?",
@@ -188,7 +198,6 @@ def verify_payment():
         logger.warning("invalid_signature order_id=%s payment_id=%s", order_id, payment_id)
         return jsonify({"error": "invalid_signature"}), 400
     with _get_db() as conn:
-        _prune_table(conn, "verify_cache")
         conn.commit()
         row = conn.execute( "SELECT response_json FROM verify_cache WHERE payment_id = ?", (payment_id,), ).fetchone()
         if row:
@@ -308,7 +317,6 @@ def razorpay_webhook():
         return jsonify({"error": "missing_event_id"}), 400
     event_type = event.get("event")
     with _get_db() as conn:
-        _prune_table(conn, "processed_webhook_events")
         conn.commit()
         try:
             conn.execute( '''INSERT INTO processed_webhook_events 
