@@ -14,6 +14,7 @@ load_dotenv()
 logging.basicConfig( level=logging.INFO , format="%(asctime)s %(levelname)s %(name)s: %(message)s", )
 logger = logging.getLogger("payment")
 app = Flask(__name__)
+
 def _require(key):
     val = os.environ.get(key)
     if not val:
@@ -24,7 +25,8 @@ KEY_ID = _require("RAZORPAY_KEY_ID")
 KEY_SECRET = _require("RAZORPAY_KEY_SECRET")
 WEBHOOK_SECRET = _require("RAZORPAY_WEBHOOK_SECRET")
 RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
-app.config["MAX_CONTENT_LENGTH"] = 256 * 1024  # 256KB request body cap (item #12)
+INTERNAL_API_KEY = _require("INTERNAL_API_KEY")
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
 limiter = Limiter( key_func=get_remote_address , app=app , default_limits=[] , storage_uri=RATE_LIMIT_STORAGE_URI , )
 BASE_URL = "https://api.razorpay.com/v1"
 AUTH = (KEY_ID, KEY_SECRET)
@@ -47,6 +49,7 @@ def _init_db():
         conn.executescript(""" CREATE TABLE IF NOT EXISTS processed_webhook_events (
                                 event_id   TEXT PRIMARY KEY,
                                 event_type TEXT,
+                                status     TEXT NOT NULL DEFAULT 'processing',
                                 created_at REAL NOT NULL );
                             
                             CREATE TABLE IF NOT EXISTS order_creation_cache (
@@ -95,7 +98,11 @@ def _release_idempotency_claim(idempotency_key: str):
             (idempotency_key,),)
         conn.commit()
 
-def _request(method, path, **kwargs):
+def _require_internal_api_key():
+    provided = request.headers.get("X-Internal-Api-Key", "")
+    return hmac.compare_digest(provided, INTERNAL_API_KEY)
+
+def _request(method, path, idempotent=True, **kwargs):
     url = f"{BASE_URL}{path}"
     last_exc = None
     for attempt in range(3):
@@ -103,7 +110,7 @@ def _request(method, path, **kwargs):
             resp = requests.request(method, url, auth=AUTH, timeout=10, **kwargs)
         except requests.RequestException as e:
             last_exc = e
-            if attempt == 2:
+            if not idempotent or attempt == 2:
                 raise RazorpayError(f"Network error after retries: {e}") from e
             time.sleep(1.5 * (attempt + 1))
             continue
@@ -160,7 +167,7 @@ def create_payment():
                 return jsonify({"error": "request_in_progress"}), 409
     payload = {"amount": amount_paise , "currency": currency , "receipt": receipt , "payment_capture": 1, }
     try:
-        resp = _request("POST", "/orders", json=payload)
+        resp = _request("POST", "/orders", idempotent=False, json=payload)
     except RazorpayError as e:
         logger.error("order_creation_failed (network): %s", e)
         _release_idempotency_claim(idempotency_key)
@@ -223,7 +230,10 @@ def verify_payment():
     return jsonify(result)
 
 @app.route("/api/payment/status/<payment_id>", methods=["GET"])
+@limiter.limit("30 per minute")
 def payment_status(payment_id):
+    if not _require_internal_api_key():
+        return jsonify({"error": "unauthorized"}), 401
     try:
         resp = _request("GET", f"/payments/{payment_id}")
     except RazorpayError as e:
@@ -240,7 +250,10 @@ def payment_status(payment_id):
     return jsonify({"status": status})
 
 @app.route("/api/payment/capture/<payment_id>", methods=["POST"])
+@limiter.limit("10 per minute")
 def capture_payment(payment_id):
+    if not _require_internal_api_key():
+        return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     try:
         status_resp = _request("GET", f"/payments/{payment_id}")
@@ -255,7 +268,7 @@ def capture_payment(payment_id):
         currency = status_resp.json().get("currency", "INR")
         if body.get("amount") is not None:
             logger.warning( "capture_payment received client-supplied amount for payment_id=%s; ignoring it", payment_id , )
-        resp = _request( "POST" , f"/payments/{payment_id}/capture" , json={"amount": amount_paise, "currency": currency}, )
+        resp = _request( "POST" , f"/payments/{payment_id}/capture" , idempotent=False , json={"amount": amount_paise, "currency": currency}, )
     except RazorpayError as e:
         logger.error("razorpay_unavailable during capture: %s", e)
         return jsonify({"error": "razorpay_unavailable", "details": str(e)}), 503
@@ -281,7 +294,6 @@ def _handle_payment_captured(event: dict):
     order_id = payment_entity.get("order_id")
     logger.info("payment.captured received for payment_id=%s order_id=%s", payment_id, order_id)
     _set_order_status(order_id, "captured")
-    # TODO: provision access, send confirmation email.
 
 def _handle_payment_failed(event: dict):
     payment_entity = event.get("payload", {}).get("payment", {}).get("entity", {})
@@ -290,14 +302,12 @@ def _handle_payment_failed(event: dict):
     error_desc = payment_entity.get("error_description")
     logger.warning("payment.failed for payment_id=%s order_id=%s: %s", payment_id, order_id, error_desc)
     _set_order_status(order_id, "failed")
-    # TODO: notify user, trigger dunning/retry flow.
 
 def _handle_order_paid(event: dict):
     order_entity = event.get("payload", {}).get("order", {}).get("entity", {})
     order_id = order_entity.get("id")
     logger.info("order.paid received for order_id=%s", order_id)
     _set_order_status(order_id, "paid")
-    # TODO: fulfil order.
 
 _WEBHOOK_HANDLERS = {"payment.captured": _handle_payment_captured , "payment.failed": _handle_payment_failed , "order.paid": _handle_order_paid , }
 
@@ -319,13 +329,17 @@ def razorpay_webhook():
     with _get_db() as conn:
         conn.commit()
         try:
-            conn.execute( '''INSERT INTO processed_webhook_events 
-                         (event_id, event_type, created_at) 
-                         VALUES (?, ?, ?)''',
-                         (event_id, event_type, time.time()),)
+            conn.execute( '''INSERT INTO processed_webhook_events  (event_id, event_type, status, created_at) VALUES (?, ?, 'processing', ?)''', (event_id, event_type, time.time()),)
             conn.commit()
         except sqlite3.IntegrityError:
-            return jsonify({"received": True, "duplicate": True}), 200
+            row = conn.execute("SELECT status FROM processed_webhook_events WHERE event_id = ?", (event_id,)).fetchone()
+            existing_status = row[0] if row else None
+            if existing_status == "failed":
+                conn.execute("UPDATE processed_webhook_events SET status = 'processing', created_at = ? WHERE event_id = ?",
+                    (time.time(), event_id),)
+                conn.commit()
+            else:
+                return jsonify({"received": True, "duplicate": True}), 200
     try:
         handler = _WEBHOOK_HANDLERS.get(event_type)
         if handler:
@@ -335,9 +349,12 @@ def razorpay_webhook():
     except Exception as e:
         logger.error("processing_failed for event_id=%s: %s", event_id, e)
         with _get_db() as conn:
-            conn.execute("DELETE FROM processed_webhook_events WHERE event_id = ?", (event_id,))
+            conn.execute("UPDATE processed_webhook_events SET status = 'failed' WHERE event_id = ?", (event_id,))
             conn.commit()
         return jsonify({"error": "processing_failed", "details": str(e)}), 500
+    with _get_db() as conn:
+        conn.execute("UPDATE processed_webhook_events SET status = 'done' WHERE event_id = ?", (event_id,))
+        conn.commit()
     return jsonify({"received": True}), 200
 
 @app.route("/healthz")
@@ -358,6 +375,6 @@ def handle_unexpected_error(e):
 _init_db()
 
 if __name__ == "__main__":
-# Local dev only. In production run:
-#   gunicorn -w 4 -b 0.0.0.0:5000 app:app
+    # Local dev only. In production run:
+    #   gunicorn -w 4 -b 0.0.0.0:5000 app:app
     app.run(port=5000, debug=False)
