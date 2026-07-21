@@ -280,7 +280,7 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
         logger.warning("Local webhook verification failed, falling back to API: %s", e)
         return verify_webhook_signature_remote(headers, event)
 
-def login_required(fn):
+def login_required(fn):   # had to work on login verfification
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         if not session.get("user_id"):

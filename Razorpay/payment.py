@@ -5,9 +5,10 @@ import hmac
 import hashlib
 import logging
 import sqlite3
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template , session
 from dotenv import load_dotenv
 from flask_limiter import Limiter
+import functools
 from flask_limiter.util import get_remote_address
 import requests
 load_dotenv()
@@ -26,6 +27,7 @@ KEY_SECRET = _require("RAZORPAY_KEY_SECRET")
 WEBHOOK_SECRET = _require("RAZORPAY_WEBHOOK_SECRET")
 RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 INTERNAL_API_KEY = _require("INTERNAL_API_KEY")
+app.secret_key = _require("FLASK_SECRET_KEY")
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
 limiter = Limiter( key_func=get_remote_address , app=app , default_limits=[] , storage_uri=RATE_LIMIT_STORAGE_URI , )
 BASE_URL = "https://api.razorpay.com/v1"
@@ -98,9 +100,17 @@ def _release_idempotency_claim(idempotency_key: str):
             (idempotency_key,),)
         conn.commit()
 
-def _require_internal_api_key():
+def _require_internal_api_key():       # had to work on login verification
     provided = request.headers.get("X-Internal-Api-Key", "")
     return hmac.compare_digest(provided, INTERNAL_API_KEY)
+
+def login_required(fn):   # had to work on login verfification
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not session.get("user_id"):
+            return jsonify({"error": "unauthorized"}), 401
+        return fn(*args, **kwargs)
+    return wrapper
 
 def _request(method, path, idempotent=True, **kwargs):
     url = f"{BASE_URL}{path}"
@@ -138,7 +148,10 @@ def checkout_page():
 
 @app.route("/api/payment/create", methods=["POST"])
 @limiter.limit("20 per minute")
+@login_required
 def create_payment():
+    if not _require_internal_api_key():
+        return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     plan_id = body.get("plan_id")
     if not plan_id or plan_id not in PRICE_TABLE_PAISE:
@@ -231,6 +244,7 @@ def verify_payment():
 
 @app.route("/api/payment/status/<payment_id>", methods=["GET"])
 @limiter.limit("30 per minute")
+@login_required
 def payment_status(payment_id):
     if not _require_internal_api_key():
         return jsonify({"error": "unauthorized"}), 401
@@ -251,9 +265,8 @@ def payment_status(payment_id):
 
 @app.route("/api/payment/capture/<payment_id>", methods=["POST"])
 @limiter.limit("10 per minute")
+@login_required
 def capture_payment(payment_id):
-    if not _require_internal_api_key():
-        return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     try:
         status_resp = _request("GET", f"/payments/{payment_id}")
