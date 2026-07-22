@@ -5,17 +5,15 @@ import hmac
 import hashlib
 import logging
 import sqlite3
-from flask import Flask, request, jsonify, render_template , session
+import functools
+from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 from flask_limiter import Limiter
-import functools
 from flask_limiter.util import get_remote_address
 import requests
-from typing import Any, Optional
-from datetime import datetime, timezone
 from supabase import create_client, Client
 load_dotenv()
-logging.basicConfig( level=logging.INFO , format="%(asctime)s %(levelname)s %(name)s: %(message)s", )
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("payment")
 app = Flask(__name__)
 
@@ -32,32 +30,71 @@ RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 INTERNAL_API_KEY = _require("INTERNAL_API_KEY")
 app.secret_key = _require("FLASK_SECRET_KEY")
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
-limiter = Limiter( key_func=get_remote_address , app=app , default_limits=[] , storage_uri=RATE_LIMIT_STORAGE_URI , )
+limiter = Limiter( key_func=get_remote_address, app=app, default_limits=[], storage_uri=RATE_LIMIT_STORAGE_URI, )
 BASE_URL = "https://api.razorpay.com/v1"
 AUTH = (KEY_ID, KEY_SECRET)
 DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
 _STORE_TTL_SECONDS = 18 * 60 * 60
-PRICE_TABLE_PAISE = { "basic_monthly": 20000, }
+PRICE_TABLE_PAISE = {"basic_monthly": 20000}
 ALLOWED_CURRENCIES = {"INR"}
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_KEY = _require("SUPABASE_KEY")
-mail = _require("email") or input("Enter the Email For the Login : ") # login details that should be listened by the client to the server
-passw = _require("pass") or input("Enter the Password for the login : ") # login details that should be listened by the client to the server
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE_NAME = "users"
-try:
-    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
-except Exception:
-    "login not function "
 
 class RazorpayError(Exception):
     pass
 
-def get_all_rows(limit: int = 100) -> list[dict]:
-    response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
-    return response.data
+@app.route("/api/login", methods=["POST"])
+@limiter.limit("10 per minute")
+def login():
+    body = request.get_json(silent=True) or {}
+    email = body.get("email")
+    password = body.get("password")
+    if not email or not password:
+        return jsonify({"error": "missing_credentials"}), 400
+    try:
+        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+    except Exception:
+        logger.warning("login_failed for email=%s", email)
+        return jsonify({"error": "invalid_credentials"}), 401
+    if not res or not res.session or not res.user:
+        return jsonify({"error": "invalid_credentials"}), 401
+    return jsonify( { "access_token": res.session.access_token, 
+                     "refresh_token": res.session.refresh_token, 
+                     "user_id": res.user.id, })
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        try:
+            supabase.auth.admin.sign_out(token)
+        except Exception:
+            pass
+    return jsonify({"ok": True})
+
+def require_user(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"error": "missing_token"}), 401
+        token = auth_header.split(" ", 1)[1]
+        try:
+            user_resp = supabase.auth.get_user(token)
+        except Exception:
+            return jsonify({"error": "invalid_token"}), 401
+        if not user_resp or not user_resp.user:
+            return jsonify({"error": "invalid_token"}), 401
+        request.user = user_resp.user
+        return f(*args, **kwargs)
+    return wrapper
+
+def _require_internal_api_key():
+    provided = request.headers.get("X-Internal-Api-Key", "")
+    return hmac.compare_digest(provided, INTERNAL_API_KEY)
 
 def _get_db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -67,17 +104,17 @@ def _get_db():
 
 def _init_db():
     with _get_db() as conn:
-        conn.executescript(""" CREATE TABLE IF NOT EXISTS processed_webhook_events (
+        conn.executescript( """CREATE TABLE IF NOT EXISTS processed_webhook_events (
                                 event_id   TEXT PRIMARY KEY,
                                 event_type TEXT,
                                 status     TEXT NOT NULL DEFAULT 'processing',
                                 created_at REAL NOT NULL );
-                            
+
                             CREATE TABLE IF NOT EXISTS order_creation_cache (
                                 idempotency_key TEXT PRIMARY KEY,
                                 response_json   TEXT,
-                                created_at      REAL NOT NULL ); 
-                                
+                                created_at      REAL NOT NULL );
+
                             CREATE TABLE IF NOT EXISTS orders (
                                 order_id   TEXT PRIMARY KEY,
                                 plan_id    TEXT,
@@ -86,50 +123,37 @@ def _init_db():
                                 status     TEXT NOT NULL DEFAULT 'created',
                                 created_at REAL NOT NULL,
                                 updated_at REAL NOT NULL );
-                                
+
                             CREATE TABLE IF NOT EXISTS verify_cache (
-                                payment_id  TEXT PRIMARY KEY,
+                                payment_id    TEXT PRIMARY KEY,
                                 response_json TEXT NOT NULL,
-                                created_at  REAL NOT NULL );
-                                
+                                created_at    REAL NOT NULL);
+
                             CREATE TRIGGER IF NOT EXISTS processed_webhook_events_clean AFTER INSERT ON processed_webhook_events
-                                BEGIN
-                                    DELETE FROM processed_webhook_events WHERE created_at < (strftime('%s', 'now') - 86400);
-                                END;
-                                
+                            BEGIN
+                                DELETE FROM processed_webhook_events WHERE created_at < (strftime('%s', 'now') - 86400);
+                            END;
+
                             CREATE TRIGGER IF NOT EXISTS order_creation_cache_clean AFTER INSERT ON order_creation_cache
-                                BEGIN
-                                    DELETE FROM order_creation_cache WHERE created_at < (strftime('%s', 'now') - 86400);
-                                END;
-                                
+                            BEGIN
+                                DELETE FROM order_creation_cache WHERE created_at < (strftime('%s', 'now') - 86400);
+                            END;
+
                             CREATE TRIGGER IF NOT EXISTS verify_cache_clean AFTER INSERT ON verify_cache
-                                BEGIN
-                                    DELETE FROM verify_cache WHERE created_at < (strftime('%s', 'now') - 86400);
-                                END;
-                                
+                            BEGIN
+                                DELETE FROM verify_cache WHERE created_at < (strftime('%s', 'now') - 86400);
+                            END;
+
                             CREATE INDEX IF NOT EXISTS idx_processed_created ON processed_webhook_events(created_at);
                             CREATE INDEX IF NOT EXISTS idx_ordercache_created ON order_creation_cache(created_at);
-                            CREATE INDEX IF NOT EXISTS idx_verify_created ON verify_cache(created_at);""")
+                            CREATE INDEX IF NOT EXISTS idx_verify_created ON verify_cache(created_at); """ )
 
 def _release_idempotency_claim(idempotency_key: str):
     if not idempotency_key:
         return
     with _get_db() as conn:
-        conn.execute("DELETE FROM order_creation_cache WHERE idempotency_key = ? AND response_json IS NULL",
-            (idempotency_key,),)
+        conn.execute( "DELETE FROM order_creation_cache WHERE idempotency_key = ? AND response_json IS NULL", (idempotency_key,), )
         conn.commit()
-
-def _require_internal_api_key():       # had to work on login verification
-    provided = request.headers.get("X-Internal-Api-Key", "")
-    return hmac.compare_digest(provided, INTERNAL_API_KEY)
-
-def login_required():  
-    row = get_all_rows()
-    for rows in row:
-        login_check = rows["user_id"]
-    if not login_check :
-        return "Error"
-    return "Verified"
 
 def _request(method, path, idempotent=True, **kwargs):
     url = f"{BASE_URL}{path}"
@@ -160,19 +184,15 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
 
 @app.route("/checkout")
 def checkout_page():
-    plan_id = request.args.get("plan_id" , "basic_monthly")
+    plan_id = request.args.get("plan_id", "basic_monthly")
     if plan_id not in PRICE_TABLE_PAISE:
         return jsonify({"error": "invalid_plan_id"}), 400
     return render_template("checkout.html", plan_id=plan_id, key_id=KEY_ID)
 
 @app.route("/api/payment/create", methods=["POST"])
 @limiter.limit("20 per minute")
+@require_user
 def create_payment():
-    login_ch = login_required()
-    if login_ch == "Error" :
-        return "Login not found " 
-    if login_ch == "Verified" :
-        print("Login Verified")
     if not _require_internal_api_key():
         return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
@@ -188,20 +208,17 @@ def create_payment():
     with _get_db() as conn:
         conn.commit()
         if idempotency_key:
-            row = conn.execute("SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?",
-                               (idempotency_key,),).fetchone()
+            row = conn.execute( "SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?", (idempotency_key,), ).fetchone()
             if row:
                 if row[0] is None:
                     return jsonify({"error": "request_in_progress"}), 409
                 return jsonify(json.loads(row[0]))
             try:
-                conn.execute("INSERT INTO order_creation_cache (idempotency_key, response_json, created_at) "
-                             "VALUES (?, NULL, ?)",
-                             (idempotency_key, time.time()),)
+                conn.execute( "INSERT INTO order_creation_cache (idempotency_key, response_json, created_at) " "VALUES (?, NULL, ?)", (idempotency_key, time.time()), )
                 conn.commit()
             except sqlite3.IntegrityError:
                 return jsonify({"error": "request_in_progress"}), 409
-    payload = {"amount": amount_paise , "currency": currency , "receipt": receipt , "payment_capture": 1, }
+    payload = {"amount": amount_paise, "currency": currency, "receipt": receipt, "payment_capture": 1}
     try:
         resp = _request("POST", "/orders", idempotent=False, json=payload)
     except RazorpayError as e:
@@ -213,18 +230,19 @@ def create_payment():
         _release_idempotency_claim(idempotency_key)
         return jsonify({"error": "order_creation_failed", "details": resp.text}), 502
     order = resp.json()
-    result = { "order_id": order["id"] , "amount": order["amount"] , "currency": order["currency"] , "key_id": KEY_ID ,}
+    result = {  "order_id": order["id"],
+                "amount": order["amount"],
+                "currency": order["currency"],
+                "key_id": KEY_ID, }
     now = time.time()
     with _get_db() as conn:
-        conn.execute(""" INSERT OR IGNORE INTO orders 
-                     (order_id, plan_id, amount, currency, status, created_at, updated_at) 
-                     VALUES (?, ?, ?, ?, 'created', ?, ?) """, 
-                     (order["id"], plan_id, order["amount"], order["currency"], now, now),)
+        conn.execute( """INSERT OR IGNORE INTO orders
+                        (order_id, plan_id, amount, currency, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'created', ?, ?)""",
+                        (order["id"], plan_id, order["amount"], order["currency"], now, now), ) 
         conn.commit()
     if idempotency_key:
         with _get_db() as conn:
-            conn.execute("UPDATE order_creation_cache SET response_json = ?, created_at = ? WHERE idempotency_key = ?",
-                (json.dumps(result), time.time(), idempotency_key),)
+            conn.execute( "UPDATE order_creation_cache SET response_json = ?, created_at = ? WHERE idempotency_key = ?", (json.dumps(result), time.time(), idempotency_key), )
             conn.commit()
     return jsonify(result)
 
@@ -242,7 +260,7 @@ def verify_payment():
         return jsonify({"error": "invalid_signature"}), 400
     with _get_db() as conn:
         conn.commit()
-        row = conn.execute( "SELECT response_json FROM verify_cache WHERE payment_id = ?", (payment_id,), ).fetchone()
+        row = conn.execute( "SELECT response_json FROM verify_cache WHERE payment_id = ?", (payment_id,) ).fetchone()
         if row:
             return jsonify(json.loads(row[0]))
     try:
@@ -258,21 +276,14 @@ def verify_payment():
     _TERMINAL_STATUSES = {"captured", "failed"}
     if status in _TERMINAL_STATUSES:
         with _get_db() as conn:
-            conn.execute("""INSERT OR REPLACE INTO verify_cache 
-                         (payment_id, response_json, created_at)
-                         VALUES (?, ?, ?)""",
-                         (payment_id, json.dumps(result), time.time()))
+            conn.execute( """INSERT OR REPLACE INTO verify_cache (payment_id, response_json, created_at) VALUES (?, ?, ?)""", (payment_id, json.dumps(result), time.time()), )
             conn.commit()
     return jsonify(result)
 
 @app.route("/api/payment/status/<payment_id>", methods=["GET"])
 @limiter.limit("30 per minute")
+@require_user
 def payment_status(payment_id):
-    login_ch = login_required()
-    if login_ch == "Error" :
-        return "Login not found " 
-    if login_ch == "Verified" :
-        print("Login Verified")
     if not _require_internal_api_key():
         return jsonify({"error": "unauthorized"}), 401
     try:
@@ -292,12 +303,8 @@ def payment_status(payment_id):
 
 @app.route("/api/payment/capture/<payment_id>", methods=["POST"])
 @limiter.limit("10 per minute")
+@require_user
 def capture_payment(payment_id):
-    login_ch = login_required()
-    if login_ch == "Error" :
-        return "Login not found " 
-    if login_ch == "Verified" :
-        print("Login Verified")
     body = request.get_json(silent=True) or {}
     try:
         status_resp = _request("GET", f"/payments/{payment_id}")
@@ -311,8 +318,8 @@ def capture_payment(payment_id):
         amount_paise = status_resp.json().get("amount")
         currency = status_resp.json().get("currency", "INR")
         if body.get("amount") is not None:
-            logger.warning( "capture_payment received client-supplied amount for payment_id=%s; ignoring it", payment_id , )
-        resp = _request( "POST" , f"/payments/{payment_id}/capture" , idempotent=False , json={"amount": amount_paise, "currency": currency}, )
+            logger.warning( "capture_payment received client-supplied amount for payment_id=%s; ignoring it", payment_id )
+        resp = _request( "POST", f"/payments/{payment_id}/capture", idempotent=False, json={"amount": amount_paise, "currency": currency}, )
     except RazorpayError as e:
         logger.error("razorpay_unavailable during capture: %s", e)
         return jsonify({"error": "razorpay_unavailable", "details": str(e)}), 503
@@ -328,8 +335,7 @@ def _set_order_status(order_id: str, status: str):
     if not order_id:
         return
     with _get_db() as conn:
-        conn.execute( "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ?", 
-                     (status, time.time(), order_id),)
+        conn.execute( "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ?", (status, time.time(), order_id),)
         conn.commit()
 
 def _handle_payment_captured(event: dict):
@@ -353,7 +359,7 @@ def _handle_order_paid(event: dict):
     logger.info("order.paid received for order_id=%s", order_id)
     _set_order_status(order_id, "paid")
 
-_WEBHOOK_HANDLERS = {"payment.captured": _handle_payment_captured , "payment.failed": _handle_payment_failed , "order.paid": _handle_order_paid , }
+_WEBHOOK_HANDLERS = { "payment.captured": _handle_payment_captured, "payment.failed": _handle_payment_failed, "order.paid": _handle_order_paid, }
 
 @app.route("/api/razorpay/webhook", methods=["POST"])
 @limiter.limit("120 per minute")
@@ -373,14 +379,13 @@ def razorpay_webhook():
     with _get_db() as conn:
         conn.commit()
         try:
-            conn.execute( '''INSERT INTO processed_webhook_events  (event_id, event_type, status, created_at) VALUES (?, ?, 'processing', ?)''', (event_id, event_type, time.time()),)
+            conn.execute( """INSERT INTO processed_webhook_events (event_id, event_type, status, created_at) VALUES (?, ?, 'processing', ?)""", (event_id, event_type, time.time()),)
             conn.commit()
         except sqlite3.IntegrityError:
-            row = conn.execute("SELECT status FROM processed_webhook_events WHERE event_id = ?", (event_id,)).fetchone()
+            row = conn.execute( "SELECT status FROM processed_webhook_events WHERE event_id = ?", (event_id,) ).fetchone()
             existing_status = row[0] if row else None
             if existing_status == "failed":
-                conn.execute("UPDATE processed_webhook_events SET status = 'processing', created_at = ? WHERE event_id = ?",
-                    (time.time(), event_id),)
+                conn.execute( "UPDATE processed_webhook_events SET status = 'processing', created_at = ? WHERE event_id = ?", (time.time(), event_id), )
                 conn.commit()
             else:
                 return jsonify({"received": True, "duplicate": True}), 200
