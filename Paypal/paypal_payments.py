@@ -22,6 +22,9 @@ from flask_limiter.util import get_remote_address
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography import x509
+from typing import Any, Optional
+from datetime import datetime, timezone
+from supabase import create_client, Client
 load_dotenv()
 
 def _require(key):
@@ -46,6 +49,22 @@ logger = logging.getLogger("paypal_app")
 ISO_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 TRUSTED_CERT_HOSTS = ("api.paypal.com", "api.sandbox.paypal.com")
 ACTIVE_ORDER_STATUSES = ("CREATED", "COMPLETED")
+SUPABASE_URL = _require("SUPABASE_URL")
+SUPABASE_KEY = _require("SUPABASE_KEY")
+mail = _require("email") or input("Enter the Email For the Login : ")
+passw = _require("pass") or input("Enter the Password for the login : ")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_NAME = "users"
+try:
+    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
+except Exception:
+    "login not function "
+    
+def get_all_rows(limit: int = 100) -> list[dict]:
+    response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
+    return response.data
 
 class PayPalError(Exception):
     pass
@@ -280,13 +299,13 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
         logger.warning("Local webhook verification failed, falling back to API: %s", e)
         return verify_webhook_signature_remote(headers, event)
 
-def login_required(fn):   # had to work on login verfification
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not session.get("user_id"):
-            return jsonify({"error": "unauthorized"}), 401
-        return fn(*args, **kwargs)
-    return wrapper
+def login_required():   # had to work on login verfification
+    row = get_all_rows()
+    for rows in row:
+        login_check = rows["user_id"]
+    if not login_check :
+        return "Error"
+    return "Verified"
 
 def _authorize_order_access(order_id):
     order = get_order(order_id)
@@ -322,8 +341,12 @@ def seed_cart():
 
 @app.route("/api/payment/create", methods=["POST"])
 @limiter.limit("10 per minute")
-@login_required
 def create_payment():
+    login_ch = login_required()
+    if login_ch == "Error" :
+        return "Login not found " 
+    if login_ch == "Verified" :
+        print("Login Verified")
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
     if not cart_id:
@@ -382,8 +405,12 @@ def create_payment():
     return jsonify(result)
 
 @app.route("/api/payment/status/<order_id>", methods=["GET"])
-@login_required
 def payment_status(order_id):
+    login_ch = login_required()
+    if login_ch == "Error" :
+        return "Login not found " 
+    if login_ch == "Verified" :
+        print("Login Verified")
     order, err = _authorize_order_access(order_id)
     if err: 
         return err
@@ -402,8 +429,12 @@ def payment_status(order_id):
 
 @app.route("/api/payment/capture/<order_id>", methods=["POST"])
 @limiter.limit("10 per minute")
-@login_required
 def capture_payment(order_id):
+    login_ch = login_required()
+    if login_ch == "Error" :
+        return "Login not found " 
+    if login_ch == "Verified" :
+        print("Login Verified")
     order, err = _authorize_order_access(order_id)
     if err:
         return err
