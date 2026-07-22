@@ -37,7 +37,6 @@ CLIENT_ID = _require("PAYPAL_CLIENT_ID")
 SECRET = _require("PAYPAL_SECRET")
 WEBHOOK_ID = _require("PAYPAL_WEBHOOK_ID")
 FLASK_SECRET_KEY = _require("FLASK_SECRET_KEY")
-DEMO_LOGIN_SECRET = _require("DEMO_LOGIN_SECRET")
 RETURN_URL = os.environ.get("RETURN_URL", "https://example.com/success")
 CANCEL_URL = os.environ.get("CANCEL_URL", "https://example.com/cancel")
 DB_PATH = os.environ.get("DB_PATH", "payments.db")
@@ -51,17 +50,11 @@ TRUSTED_CERT_HOSTS = ("api.paypal.com", "api.sandbox.paypal.com")
 ACTIVE_ORDER_STATUSES = ("CREATED", "COMPLETED")
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_KEY = _require("SUPABASE_KEY")
-mail = _require("email") or input("Enter the Email For the Login : ") # login details that should be listened by the client to the server
-passw = _require("pass") or input("Enter the Password for the login : ") # login details that should be listened by the client to the server
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE_NAME = "users"
-try:
-    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
-except Exception:
-    "login not function "
-    
+
 def get_all_rows(limit: int = 100) -> list[dict]:
     response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
     return response.data
@@ -93,46 +86,44 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(""" CREATE TABLE IF NOT EXISTS carts ( 
-                           cart_id TEXT PRIMARY KEY,
-                           user_id TEXT NOT NULL,
-                           amount TEXT NOT NULL,
-                           currency TEXT NOT NULL );
-                
-                        CREATE TABLE IF NOT EXISTS orders (
-                            paypal_order_id TEXT PRIMARY KEY,
-                            cart_id TEXT NOT NULL,
-                            user_id TEXT NOT NULL,
-                            amount TEXT NOT NULL,
-                            currency TEXT NOT NULL,
-                            status TEXT NOT NULL DEFAULT 'CREATED',
-                            paid INTEGER NOT NULL DEFAULT 0,
-                            created_at REAL NOT NULL );
-                
-                        CREATE TABLE IF NOT EXISTS idempotency_cache (
-                            idempotency_key TEXT PRIMARY KEY,
-                            request_hash TEXT NOT NULL,
-                            response TEXT NOT NULL,
-                            created_at REAL NOT NULL);
-                            
-                        CREATE TABLE IF NOT EXISTS webhook_events (
-                            event_id TEXT PRIMARY KEY,
-                            created_at REAL NOT NULL);
-                            
-                        CREATE TRIGGER IF NOT EXISTS cleanup_idempotency_cache AFTER INSERT ON idempotency_cache
-                            BEGIN
-                                DELETE FROM idempotency_cache WHERE created_at < (strftime('%s', 'now') - 86400);
-                            END;
+                                cart_id TEXT PRIMARY KEY,
+                                user_id TEXT NOT NULL,
+                                amount TEXT NOT NULL,
+                                currency TEXT NOT NULL );
+                        
+                                CREATE TABLE IF NOT EXISTS orders (
+                                    paypal_order_id TEXT PRIMARY KEY,
+                                    cart_id TEXT NOT NULL,
+                                    user_id TEXT NOT NULL,
+                                    amount TEXT NOT NULL,
+                                    currency TEXT NOT NULL,
+                                    status TEXT NOT NULL DEFAULT 'CREATED',
+                                    paid INTEGER NOT NULL DEFAULT 0,
+                                    created_at REAL NOT NULL );
+                        
+                                CREATE TABLE IF NOT EXISTS idempotency_cache (
+                                    idempotency_key TEXT PRIMARY KEY,
+                                    request_hash TEXT NOT NULL,
+                                    response TEXT NOT NULL,
+                                    created_at REAL NOT NULL);
+                                    
+                                CREATE TABLE IF NOT EXISTS webhook_events (
+                                    event_id TEXT PRIMARY KEY,
+                                    created_at REAL NOT NULL);
+                                    
+                                CREATE TRIGGER IF NOT EXISTS cleanup_idempotency_cache AFTER INSERT ON idempotency_cache
+                                    BEGIN
+                                        DELETE FROM idempotency_cache WHERE created_at < (strftime('%s', 'now') - 86400);
+                                    END;
 
-                        CREATE TRIGGER IF NOT EXISTS cleanup_webhook_events AFTER INSERT ON webhook_events
-                            BEGIN
-                                DELETE FROM webhook_events WHERE created_at < (strftime('%s', 'now') - 86400);
-                            END;
-                            
-                        CREATE INDEX IF NOT EXISTS idx_idem_created ON idempotency_cache(created_at);
-                        
-                        CREATE INDEX IF NOT EXISTS idx_webhook_created ON webhook_events(created_at);
-                        
-                        CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_active_cart ON orders(cart_id) WHERE status IN ('CREATED', 'COMPLETED'); """)
+                                CREATE TRIGGER IF NOT EXISTS cleanup_webhook_events AFTER INSERT ON webhook_events
+                                    BEGIN
+                                        DELETE FROM webhook_events WHERE created_at < (strftime('%s', 'now') - 86400);
+                                    END;
+                                    
+                                CREATE INDEX IF NOT EXISTS idx_idem_created ON idempotency_cache(created_at);
+                                CREATE INDEX IF NOT EXISTS idx_webhook_created ON webhook_events(created_at);
+                                CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_active_cart ON orders(cart_id) WHERE status IN ('CREATED', 'COMPLETED'); """)
 
 def seed_demo_cart(cart_id, user_id, amount, currency):
     with get_conn() as conn:
@@ -299,13 +290,13 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
         logger.warning("Local webhook verification failed, falling back to API: %s", e)
         return verify_webhook_signature_remote(headers, event)
 
-def login_required():  
-    row = get_all_rows()
-    for rows in row:
-        login_check = rows["user_id"]
-    if not login_check :
-        return "Error"
-    return "Verified"
+def login_required(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return jsonify({"error": "not_logged_in"}), 401
+        return f(*args, **kwargs)
+    return wrapper
 
 def _authorize_order_access(order_id):
     order = get_order(order_id)
@@ -319,6 +310,36 @@ app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
 limiter = Limiter(get_remote_address, app=app, storage_uri=RATE_LIMIT_STORAGE_URI, default_limits=[])
 init_db()
+
+@app.route("/api/login", methods=["POST"])
+@limiter.limit("5 per minute")
+def login():
+    body = request.get_json(silent=True) or {}
+    email = body.get("email")
+    password = body.get("password")
+    if not email or not password:
+        return jsonify({"error": "email and password required"}), 400
+    try:
+        result = supabase.auth.sign_in_with_password({"email": email, "password": password})
+    except Exception as e:
+        logger.warning("Login failed for %s: %s", email, e)
+        return jsonify({"error": "invalid_credentials"}), 401
+    if not result.user:
+        return jsonify({"error": "invalid_credentials"}), 401
+    session["user_id"] = result.user.id
+    session["email"] = result.user.email
+    return jsonify({"logged_in": True, "user_id": result.user.id})
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"logged_out": True})
+
+@app.route("/api/whoami", methods=["GET"])
+def whoami():
+    if "user_id" not in session:
+        return jsonify({"error": "not_logged_in"}), 401
+    return jsonify({"user_id": session["user_id"], "email": session.get("email")})
 
 @app.route("/api/demo/seed-cart", methods=["POST"])
 @limiter.limit("10 per minute")
@@ -341,12 +362,8 @@ def seed_cart():
 
 @app.route("/api/payment/create", methods=["POST"])
 @limiter.limit("10 per minute")
+@login_required
 def create_payment():
-    login_ch = login_required()
-    if login_ch == "Error" :
-        return "Login not found " 
-    if login_ch == "Verified" :
-        print("Login Verified")
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
     if not cart_id:
@@ -405,12 +422,8 @@ def create_payment():
     return jsonify(result)
 
 @app.route("/api/payment/status/<order_id>", methods=["GET"])
+@login_required
 def payment_status(order_id):
-    login_ch = login_required()
-    if login_ch == "Error" :
-        return "Login not found " 
-    if login_ch == "Verified" :
-        print("Login Verified")
     order, err = _authorize_order_access(order_id)
     if err: 
         return err
@@ -429,12 +442,8 @@ def payment_status(order_id):
 
 @app.route("/api/payment/capture/<order_id>", methods=["POST"])
 @limiter.limit("10 per minute")
+@login_required
 def capture_payment(order_id):
-    login_ch = login_required()
-    if login_ch == "Error" :
-        return "Login not found " 
-    if login_ch == "Verified" :
-        print("Login Verified")
     order, err = _authorize_order_access(order_id)
     if err:
         return err

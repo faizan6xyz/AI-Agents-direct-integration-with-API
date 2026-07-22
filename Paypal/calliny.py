@@ -1,57 +1,90 @@
+import os
 import time
-import threading
+import logging
+import sqlite3
 import requests
-import paypal_payments as pp
-LOCAL_API_URL = "http://localhost:5000"
-DEMO_CART_ID = "demo-cart-1" 
-DEMO_USER_ID = "demo-user-1" # it wuld be fetches by the db 
-DEMO_AMOUNT = "20.00"
-DEMO_CURRENCY = "USD"
+from dotenv import load_dotenv
+from supabase import create_client, Client
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("reconcile")
+KEY_ID = os.environ["RAZORPAY_KEY_ID"]
+KEY_SECRET = os.environ["RAZORPAY_KEY_SECRET"]
+BASE_URL = "https://api.razorpay.com/v1"
+AUTH = (KEY_ID, KEY_SECRET)
+DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
+STUCK_THRESHOLD_SECONDS = int(os.environ.get("RECONCILE_STUCK_THRESHOLD_SECONDS", 30 * 60))
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+RECONCILE_SERVICE_EMAIL = os.environ["RECONCILE_SERVICE_EMAIL"]
+RECONCILE_SERVICE_PASSWORD = os.environ["RECONCILE_SERVICE_PASSWORD"]
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def _start_server_in_background():
-    thread = threading.Thread( target=lambda: pp.app.run(port=5000, debug=False, use_reloader=False), daemon=True )
-    thread.start()
-    time.sleep(1.5)
+def _get_db():
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL;")  # match app.py's connection settings
+    conn.execute("PRAGMA busy_timeout=10000;")
+    return conn
 
-def seed_demo_cart_via_api(cart_id: str, user_id: str, amount: str, currency: str) -> dict:
-    resp = requests.post(f"{LOCAL_API_URL}/api/demo/seed-cart", 
-                         json={"cart_id": cart_id, "user_id": user_id, "amount": amount, "currency": currency}, )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Failed to seed demo cart: {resp.status_code} {resp.text}")
-    return resp.json()
+def _fetch_order_payments(order_id: str):
+    resp = requests.get(f"{BASE_URL}/orders/{order_id}/payments", auth=AUTH, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("items", [])
 
-def run_payment_pipeline(cart_id: str = DEMO_CART_ID, user_id: str = DEMO_USER_ID) -> dict:
-    session = requests.Session()
-    session.post(f"{LOCAL_API_URL}/api/auth/demo-login", json={"user_id": user_id})
-    create_resp = session.post( f"{LOCAL_API_URL}/api/payment/create",
-                                json={"cart_id": cart_id},
-                                headers={"Idempotency-Key": f"pipeline-{cart_id}"}, )
-    if create_resp.status_code != 200:
-        return {"success": False, "stage": "create", "error": create_resp.text}
-    data = create_resp.json()
-    order_id = data["order_id"]
-    approval_link = data["approval_link"]
-    print(f"Order created: {order_id}")
-    print(f"\nGo approve the payment here:\n{approval_link}\n")
-    input("Press Enter once you've approved the payment on PayPal...")
-    print("Checking order status...")
-    status_resp = session.get(f"{LOCAL_API_URL}/api/payment/status/{order_id}")
-    if status_resp.status_code != 200:
-        return {"success": False, "stage": "status_check", "error": status_resp.text}
-    status = status_resp.json().get("status")
-    print(f"Status: {status}")
-    print("Capturing payment...")
-    capture_resp = session.post(f"{LOCAL_API_URL}/api/payment/capture/{order_id}")
-    if capture_resp.status_code != 200:
-        return {"success": False, "stage": "capture", "error": capture_resp.text, "order_id": order_id}
-    capture_data = capture_resp.json()
-    if capture_data.get("status") == "Payment Done":
-        print("Payment completed successfully.")
-        return {"success": True, "order_id": order_id, "status": "Payment Done"}
-    return {"success": False, "stage": "capture", "status": capture_data.get("status"), "order_id": order_id}
+def _login() -> str:
+    try:
+        res = supabase.auth.sign_in_with_password( {"email": RECONCILE_SERVICE_EMAIL, "password": RECONCILE_SERVICE_PASSWORD} )
+    except Exception as e:
+        raise RuntimeError(f"Reconcile service login failed: {e}") from e
+    if not res or not res.session or not res.user:
+        raise RuntimeError("Reconcile service login failed: no session returned")
+    logger.info("Reconcile service authenticated as user_id=%s", res.user.id)
+    return res.session.access_token
+
+def _verify_token(access_token: str):
+    try:
+        user_resp = supabase.auth.get_user(access_token)
+    except Exception as e:
+        raise RuntimeError(f"Reconcile service token verification failed: {e}") from e
+    if not user_resp or not user_resp.user:
+        raise RuntimeError("Reconcile service token verification failed: invalid token")
+    return user_resp.user
+
+def reconcile_stuck_orders():
+    cutoff = time.time() - STUCK_THRESHOLD_SECONDS
+    with _get_db() as conn:
+        stuck = conn.execute( """SELECT order_id, status, created_at FROM orders WHERE status IN ('created', 'authorized') AND created_at < ?""", (cutoff,), ).fetchall()
+    if not stuck:
+        logger.info("No stuck orders found.")
+        return
+    for order_id, status, created_at in stuck:
+        age_minutes = (time.time() - created_at) / 60
+        try:
+            payments = _fetch_order_payments(order_id)
+        except requests.RequestException as e:
+            logger.error("Failed to fetch payments for order_id=%s: %s", order_id, e)
+            continue
+        captured = [p for p in payments if p.get("status") == "captured"]
+        failed_only = payments and all(p.get("status") == "failed" for p in payments)
+        if captured:
+            new_status = "captured"
+        elif failed_only:
+            new_status = "failed"
+        elif not payments:
+            logger.warning( "Order %s has no payment attempts after %.0f min (age past threshold).", order_id, age_minutes, )
+            continue
+        else:
+            logger.warning( "Order %s still unresolved after %.0f min (statuses: %s) — " "webhook likely missed, needs manual look.", order_id, age_minutes, [p.get("status") for p in payments], )
+            continue
+        with _get_db() as conn:
+            conn.execute( "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ?", (new_status, time.time(), order_id), )
+            conn.commit()
+        logger.info( "Reconciled order_id=%s: %s -> %s (webhook must have been missed)", order_id , status , new_status, )
+
+def run():
+    access_token = _login()
+    _verify_token(access_token)
+    reconcile_stuck_orders()
 
 if __name__ == "__main__":
-    _start_server_in_background()
-    seed_demo_cart_via_api(DEMO_CART_ID, DEMO_USER_ID, DEMO_AMOUNT, DEMO_CURRENCY)
-    result = run_payment_pipeline()
-    print(result)
+    run()
