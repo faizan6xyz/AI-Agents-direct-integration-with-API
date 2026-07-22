@@ -11,6 +11,9 @@ from flask_limiter import Limiter
 import functools
 from flask_limiter.util import get_remote_address
 import requests
+from typing import Any, Optional
+from datetime import datetime, timezone
+from supabase import create_client, Client
 load_dotenv()
 logging.basicConfig( level=logging.INFO , format="%(asctime)s %(levelname)s %(name)s: %(message)s", )
 logger = logging.getLogger("payment")
@@ -36,9 +39,25 @@ DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
 _STORE_TTL_SECONDS = 18 * 60 * 60
 PRICE_TABLE_PAISE = { "basic_monthly": 20000, }
 ALLOWED_CURRENCIES = {"INR"}
+SUPABASE_URL = _require("SUPABASE_URL")
+SUPABASE_KEY = _require("SUPABASE_KEY")
+mail = _require("email") or input("Enter the Email For the Login : ") # login details that should be listened by the client to the server
+passw = _require("pass") or input("Enter the Password for the login : ") # login details that should be listened by the client to the server
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_NAME = "users"
+try:
+    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
+except Exception:
+    "login not function "
 
 class RazorpayError(Exception):
     pass
+
+def get_all_rows(limit: int = 100) -> list[dict]:
+    response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
+    return response.data
 
 def _get_db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -104,13 +123,13 @@ def _require_internal_api_key():       # had to work on login verification
     provided = request.headers.get("X-Internal-Api-Key", "")
     return hmac.compare_digest(provided, INTERNAL_API_KEY)
 
-def login_required(fn):   # had to work on login verfification
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not session.get("user_id"):
-            return jsonify({"error": "unauthorized"}), 401
-        return fn(*args, **kwargs)
-    return wrapper
+def login_required():  
+    row = get_all_rows()
+    for rows in row:
+        login_check = rows["user_id"]
+    if not login_check :
+        return "Error"
+    return "Verified"
 
 def _request(method, path, idempotent=True, **kwargs):
     url = f"{BASE_URL}{path}"
@@ -148,8 +167,12 @@ def checkout_page():
 
 @app.route("/api/payment/create", methods=["POST"])
 @limiter.limit("20 per minute")
-@login_required
 def create_payment():
+    login_ch = login_required()
+    if login_ch == "Error" :
+        return "Login not found " 
+    if login_ch == "Verified" :
+        print("Login Verified")
     if not _require_internal_api_key():
         return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
@@ -244,8 +267,12 @@ def verify_payment():
 
 @app.route("/api/payment/status/<payment_id>", methods=["GET"])
 @limiter.limit("30 per minute")
-@login_required
 def payment_status(payment_id):
+    login_ch = login_required()
+    if login_ch == "Error" :
+        return "Login not found " 
+    if login_ch == "Verified" :
+        print("Login Verified")
     if not _require_internal_api_key():
         return jsonify({"error": "unauthorized"}), 401
     try:
@@ -265,8 +292,12 @@ def payment_status(payment_id):
 
 @app.route("/api/payment/capture/<payment_id>", methods=["POST"])
 @limiter.limit("10 per minute")
-@login_required
 def capture_payment(payment_id):
+    login_ch = login_required()
+    if login_ch == "Error" :
+        return "Login not found " 
+    if login_ch == "Verified" :
+        print("Login Verified")
     body = request.get_json(silent=True) or {}
     try:
         status_resp = _request("GET", f"/payments/{payment_id}")

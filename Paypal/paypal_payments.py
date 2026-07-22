@@ -51,8 +51,8 @@ TRUSTED_CERT_HOSTS = ("api.paypal.com", "api.sandbox.paypal.com")
 ACTIVE_ORDER_STATUSES = ("CREATED", "COMPLETED")
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_KEY = _require("SUPABASE_KEY")
-mail = _require("email") or input("Enter the Email For the Login : ")
-passw = _require("pass") or input("Enter the Password for the login : ")
+mail = _require("email") or input("Enter the Email For the Login : ") # login details that should be listened by the client to the server
+passw = _require("pass") or input("Enter the Password for the login : ") # login details that should be listened by the client to the server
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -299,7 +299,7 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
         logger.warning("Local webhook verification failed, falling back to API: %s", e)
         return verify_webhook_signature_remote(headers, event)
 
-def login_required():   # had to work on login verfification
+def login_required():  
     row = get_all_rows()
     for rows in row:
         login_check = rows["user_id"]
