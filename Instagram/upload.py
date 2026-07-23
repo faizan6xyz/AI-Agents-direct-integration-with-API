@@ -66,7 +66,6 @@ def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
             logger.warning(f"Rate limited (HTTP 429) on attempt {attempt}/{MAX_RETRIES}")
             time.sleep(RETRY_BACKOFF_BASE ** attempt)
             continue
-        # Check IG-specific rate-limit error codes in a 200 response body
         try:
             body = resp.json()
         except ValueError:
