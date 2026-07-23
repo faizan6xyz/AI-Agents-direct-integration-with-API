@@ -57,3 +57,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         USER_ID = sys.argv[1]
     main()
+    
+    # python dep_call.py user_123
