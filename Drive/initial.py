@@ -2,7 +2,7 @@ import os
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+from googleapiclient.discovery import build   # The google-api-python-client is a wrapper around the API
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 CLIENT_SECRET_FILE = "client_secret.json"
 TOKEN_FILE = "token.json"
