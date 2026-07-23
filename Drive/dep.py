@@ -149,4 +149,5 @@ def upload_file():
 
 if __name__ == "__main__":
     init_db()
+    # for server        gunicorn -w 4 -b 0.0.0.0:8080 app:app
     app.run(host="0.0.0.0", port=8080, debug=True)
