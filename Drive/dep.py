@@ -2,6 +2,8 @@ import os
 import sqlite3
 from flask import Flask, request, redirect, jsonify
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.http import MediaFileUpload
+import tempfile
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from google.auth.exceptions import RefreshError
@@ -113,12 +115,37 @@ def list_files():
     all_files = []
     page_token = None
     while True:
-        response = service.files().list( pageSize=100, fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)", pageToken=page_token).execute()
+        response = service.files().list( pageSize=100, fields="nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink, webContentLink)", pageToken=page_token).execute()
         all_files.extend(response.get("files", []))
         page_token = response.get("nextPageToken")
         if not page_token:
             break
-    return jsonify({"user_id": user_id, "count": len(all_files), "files": all_files})
+    return jsonify({"user_id": user_id, "count": len(all_files), "files": all_files })
+
+@app.route("/drive/upload", methods=["POST"])
+def upload_file():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    service = get_drive_service(user_id)
+    if not service:
+        return jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401
+    if "file" not in request.files:
+        return jsonify({"error": "file required (form-data field: file)"}), 400
+    uploaded_file = request.files["file"]
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        uploaded_file.save(tmp.name)
+        tmp_path = tmp.name
+    try:
+        file_metadata = {"name": uploaded_file.filename}
+        parent_id = request.args.get("parent_id")
+        if parent_id:
+            file_metadata["parents"] = [parent_id]
+        media = MediaFileUpload(tmp_path, mimetype=uploaded_file.mimetype, resumable=True)
+        created_file = service.files().create(body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType" ).execute()
+    finally:
+        os.remove(tmp_path)
+    return jsonify({"user_id": user_id, "file": created_file})
 
 if __name__ == "__main__":
     init_db()
