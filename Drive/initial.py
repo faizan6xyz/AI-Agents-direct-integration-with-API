@@ -35,7 +35,7 @@ def list_all_files(service):
 def main():
     creds = get_credentials()
     print("Access token:", creds.token)
-    service = build("drive", "v3", credentials=creds)
+    service = build("drive", "v3", credentials=creds) # Build a Drive named API client that has v3 version with those credentials to talk.
     files = list_all_files(service)
     print(f"\nFound {len(files)} files:\n")
     for f in files:
