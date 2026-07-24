@@ -23,7 +23,6 @@ fernet = Fernet(os.environ["FERNET_KEY"].encode())
 serializer = URLSafeSerializer(app.secret_key)
 PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
 SUBFOLDERS = ["photos", "videos", "pdf", "documents"]
-
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute(""" CREATE TABLE IF NOT EXISTS drive_accounts (
@@ -88,27 +87,30 @@ def get_drive_service(user_id):
 def get_or_create_folder(service, folder_name, parent_id=None):
     query = (f"name='{folder_name}' "
             "and mimeType='application/vnd.google-apps.folder' "
-            "and trashed=false" )
+            "and trashed=false")
     if parent_id:
         query += f" and '{parent_id}' in parents"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     folders = results.get("files", [])
     if folders:
-        return folders[0]["id"]
+        if len(folders) > 1:
+            print(f"[warning] multiple folders named '{folder_name}' found "
+                  f"under parent={parent_id}; using the first one (id={folders[0]['id']})")
+        return folders[0]["id"], False
     folder_metadata = { "name": folder_name, "mimeType": "application/vnd.google-apps.folder", }
     if parent_id:
         folder_metadata["parents"] = [parent_id]
     folder = service.files().create(body=folder_metadata, fields="id").execute()
-    return folder["id"]
+    return folder["id"], True
 
 def create_platform_folder_structure(service):
     structure = {}
     for platform in PLATFORM_FOLDERS:
-        platform_id = get_or_create_folder(service, platform)
-        structure[platform] = {"_id": platform_id}
+        platform_id, platform_created = get_or_create_folder(service, platform)
+        structure[platform] = {"_id": platform_id, "_created": platform_created}
         for sub in SUBFOLDERS:
-            sub_id = get_or_create_folder(service, sub, parent_id=platform_id)
-            structure[platform][sub] = sub_id
+            sub_id, sub_created = get_or_create_folder(service, sub, parent_id=platform_id)
+            structure[platform][sub] = {"id": sub_id, "created": sub_created}
     return structure
 
 @app.route("/connect-drive")
@@ -184,47 +186,25 @@ def upload_file():
         platform = request.args.get("platform")       # e.g. "whatsapp", "instagram", "gmail", "linkedin"
         subfolder = request.args.get("subfolder")      # e.g. "photos", "videos", "pdf", "documents"
         file_metadata = {"name": uploaded_file.filename}
+
         if platform and subfolder:
-            platform_id = get_or_create_folder(service, platform)
-            sub_id = get_or_create_folder(service, subfolder, parent_id=platform_id)
+            platform_id, _ = get_or_create_folder(service, platform)
+            sub_id, _ = get_or_create_folder(service, subfolder, parent_id=platform_id)
             file_metadata["parents"] = [sub_id]
         else:
             parent_id = request.args.get("parent_id")
             if parent_id:
                 file_metadata["parents"] = [parent_id]
+
         media = MediaFileUpload(tmp_path, mimetype=uploaded_file.mimetype, resumable=True)
-        created_file = service.files().create( body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType" ).execute()
+        created_file = service.files().create(
+            body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType"
+        ).execute()
     except HttpError as e:
         return jsonify({"error": "drive upload failed", "detail": str(e)}), 400
     finally:
         os.remove(tmp_path)
     return jsonify({"user_id": user_id, "file": created_file})
-
-@app.route("/drive/download")
-def download_file():
-    user_id = request.args.get("user_id")
-    file_id = request.args.get("file_id")
-    if not user_id or not file_id:
-        return jsonify({"error": "user_id and file_id required"}), 400
-    service = get_drive_service(user_id)
-    if not service:
-        return jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401
-    try:
-        metadata = service.files().get(fileId=file_id, fields="name, mimeType").execute()
-        request_media = service.files().get_media(fileId=file_id)
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, request_media)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buffer.seek(0)
-    except HttpError as e:
-        status = e.resp.status if e.resp else 500
-        if status == 404:
-            return jsonify({"error": "file not found"}), 404
-        return jsonify({"error": "drive error", "details": str(e)}), status
-    return send_file(buffer, download_name=metadata["name"], mimetype=metadata["mimeType"], as_attachment=True)
-
 
 @app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
