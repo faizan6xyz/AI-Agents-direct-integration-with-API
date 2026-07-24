@@ -1,8 +1,10 @@
 import os
+import io
 import sqlite3
-from flask import Flask, request, redirect, jsonify
+from flask import Flask, request, redirect, jsonify, send_file
 from google_auth_oauthlib.flow import Flow
-from googleapiclient.http import MediaFileUpload    
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.errors import HttpError
 import tempfile
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
@@ -146,6 +148,49 @@ def upload_file():
     finally:
         os.remove(tmp_path)
     return jsonify({"user_id": user_id, "file": created_file})
+
+@app.route("/drive/download")
+def download_file():
+    user_id = request.args.get("user_id")
+    file_id = request.args.get("file_id")
+    if not user_id or not file_id:
+        return jsonify({"error": "user_id and file_id required"}), 400
+    service = get_drive_service(user_id)
+    if not service:
+        return jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401
+    try:
+        metadata = service.files().get(fileId=file_id, fields="name, mimeType").execute()
+        request_media = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request_media)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+    except HttpError as e:
+        status = e.resp.status if e.resp else 500
+        if status == 404:
+            return jsonify({"error": "file not found"}), 404
+        return jsonify({"error": "drive error", "details": str(e)}), status
+    return send_file(buffer, download_name=metadata["name"], mimetype=metadata["mimeType"], as_attachment=True)
+
+@app.route("/drive/delete", methods=["DELETE"])
+def delete_file():
+    user_id = request.args.get("user_id")
+    file_id = request.args.get("file_id")
+    if not user_id or not file_id:
+        return jsonify({"error": "user_id and file_id required"}), 400
+    service = get_drive_service(user_id)
+    if not service:
+        return jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401
+    try:
+        service.files().delete(fileId=file_id).execute()
+    except HttpError as e:
+        status = e.resp.status if e.resp else 500
+        if status == 404:
+            return jsonify({"error": "file not found"}), 404
+        return jsonify({"error": "drive error", "details": str(e)}), status
+    return jsonify({"user_id": user_id, "file_id": file_id, "status": "deleted"})
 
 if __name__ == "__main__":
     init_db()

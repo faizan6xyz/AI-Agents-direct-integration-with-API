@@ -41,6 +41,36 @@ def upload_file(user_id: str, file_path: str, parent_id: str | None = None):
     print(f"\nUploaded: {uploaded['name']} -> {uploaded.get('webViewLink')}")
     return uploaded
 
+def download_file(user_id: str, file_id: str, save_path: str | None = None):
+    resp = requests.get(f"{BASE_URL}/drive/download", params={"user_id": user_id, "file_id": file_id})
+    if resp.status_code == 401:
+        print("Not connected:", resp.json())
+        return None
+    if resp.status_code == 404:
+        print("File not found:", resp.json())
+        return None
+    resp.raise_for_status()
+    if not save_path:
+        disposition = resp.headers.get("Content-Disposition", "")
+        save_path = disposition.split("filename=")[-1].strip('"') if "filename=" in disposition else file_id
+    with open(save_path, "wb") as f:
+        f.write(resp.content)
+    print(f"\nDownloaded file {file_id} -> {save_path}")
+    return save_path
+
+def delete_file(user_id: str, file_id: str):
+    resp = requests.delete(f"{BASE_URL}/drive/delete", params={"user_id": user_id, "file_id": file_id})
+    if resp.status_code == 401:
+        print("Not connected:", resp.json())
+        return False
+    if resp.status_code == 404:
+        print("File not found:", resp.json())
+        return False
+    resp.raise_for_status()
+    data = resp.json()
+    print(f"\nDeleted file: {data['file_id']}")
+    return True
+
 def main():
     ensure_connected(USER_ID)
     list_files(USER_ID)
