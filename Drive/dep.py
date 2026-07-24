@@ -17,10 +17,12 @@ app.secret_key = os.environ["FLASK_SECRET_KEY"]
 CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 DB_PATH = "drive_accounts.db"
 fernet = Fernet(os.environ["FERNET_KEY"].encode())
 serializer = URLSafeSerializer(app.secret_key)
+PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
+SUBFOLDERS = ["photos", "videos", "pdf", "documents"]
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -83,6 +85,32 @@ def get_drive_service(user_id):
             return None
     return build("drive", "v3", credentials=creds)
 
+def get_or_create_folder(service, folder_name, parent_id=None):
+    query = (f"name='{folder_name}' "
+            "and mimeType='application/vnd.google-apps.folder' "
+            "and trashed=false" )
+    if parent_id:
+        query += f" and '{parent_id}' in parents"
+    results = service.files().list(q=query, fields="files(id, name)").execute()
+    folders = results.get("files", [])
+    if folders:
+        return folders[0]["id"]
+    folder_metadata = { "name": folder_name, "mimeType": "application/vnd.google-apps.folder", }
+    if parent_id:
+        folder_metadata["parents"] = [parent_id]
+    folder = service.files().create(body=folder_metadata, fields="id").execute()
+    return folder["id"]
+
+def create_platform_folder_structure(service):
+    structure = {}
+    for platform in PLATFORM_FOLDERS:
+        platform_id = get_or_create_folder(service, platform)
+        structure[platform] = {"_id": platform_id}
+        for sub in SUBFOLDERS:
+            sub_id = get_or_create_folder(service, sub, parent_id=platform_id)
+            structure[platform][sub] = sub_id
+    return structure
+
 @app.route("/connect-drive")
 def connect_drive():
     user_id = request.args.get("user_id")
@@ -124,6 +152,20 @@ def list_files():
             break
     return jsonify({"user_id": user_id, "count": len(all_files), "files": all_files })
 
+@app.route("/drive/setup-folders", methods=["POST"])
+def setup_folders():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    service = get_drive_service(user_id)
+    if not service:
+        return jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401
+    try:
+        structure = create_platform_folder_structure(service)
+    except HttpError as e:
+        return jsonify({"error": "drive error", "detail": str(e)}), 400
+    return jsonify({"user_id": user_id, "folders": structure})
+
 @app.route("/drive/upload", methods=["POST"])
 def upload_file():
     user_id = request.args.get("user_id")
@@ -139,12 +181,21 @@ def upload_file():
         uploaded_file.save(tmp.name)
         tmp_path = tmp.name
     try:
+        platform = request.args.get("platform")       # e.g. "whatsapp", "instagram", "gmail", "linkedin"
+        subfolder = request.args.get("subfolder")      # e.g. "photos", "videos", "pdf", "documents"
         file_metadata = {"name": uploaded_file.filename}
-        parent_id = request.args.get("parent_id")
-        if parent_id:
-            file_metadata["parents"] = [parent_id]
+        if platform and subfolder:
+            platform_id = get_or_create_folder(service, platform)
+            sub_id = get_or_create_folder(service, subfolder, parent_id=platform_id)
+            file_metadata["parents"] = [sub_id]
+        else:
+            parent_id = request.args.get("parent_id")
+            if parent_id:
+                file_metadata["parents"] = [parent_id]
         media = MediaFileUpload(tmp_path, mimetype=uploaded_file.mimetype, resumable=True)
-        created_file = service.files().create(body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType" ).execute()
+        created_file = service.files().create( body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType" ).execute()
+    except HttpError as e:
+        return jsonify({"error": "drive upload failed", "detail": str(e)}), 400
     finally:
         os.remove(tmp_path)
     return jsonify({"user_id": user_id, "file": created_file})
@@ -173,6 +224,7 @@ def download_file():
             return jsonify({"error": "file not found"}), 404
         return jsonify({"error": "drive error", "details": str(e)}), status
     return send_file(buffer, download_name=metadata["name"], mimetype=metadata["mimeType"], as_attachment=True)
+
 
 @app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
