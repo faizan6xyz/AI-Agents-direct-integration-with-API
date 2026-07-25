@@ -1,5 +1,6 @@
 import os
 import io
+from datetime import datetime
 import sqlite3
 from flask import Flask, request, redirect, jsonify, send_file
 from google_auth_oauthlib.flow import Flow
@@ -8,7 +9,7 @@ from googleapiclient.errors import HttpError
 import tempfile
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
-from google.auth.exceptions import RefreshError
+from google.auth.exceptions import RefreshError, TransportError, GoogleAuthError
 from googleapiclient.discovery import build
 from itsdangerous import URLSafeSerializer, BadSignature
 from cryptography.fernet import Fernet
@@ -26,20 +27,24 @@ PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
 SUBFOLDERS = ["photos", "videos", "pdf", "documents"]
 
 def save_tokens(user_id, access_token, refresh_token, expiry):
-    dbimp.insert_rows(table_name, {"id" : user_id , "Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token" : fernet.encrypt(refresh_token.encode()) , "Token_expire" : expiry.isoformat() if expiry else None, "Connected" : 1 , "Scopes" : SCOPES})
+    dbimp.insert_rows(table_name, {"id" : user_id , "Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token" : fernet.encrypt(refresh_token.encode()) , "Token_expire": fernet.encrypt(expiry.isoformat().encode()), "Connected" : 1 , "Scopes" : SCOPES})
+    
+
+def Update_token(user_id, access_token, refresh_token, expiry):
+    dbimp.update_rows(table_name, {"Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token": fernet.encrypt(refresh_token.encode()) , "Token_expire": fernet.encrypt(expiry.isoformat().encode()) }, {"id" : user_id})
 
 def load_tokens(user_id):
     row = dbimp.select_rows(table_name , filters= {"id" : user_id})
-    if not row :
+    if not row :    
         return None
     access_token = row["Access_token"]
     refresh_token = row["Refresh_token"]
     expiry = row["Token_expire"]
     connected = row["Connected"]
-    return {"access_token": fernet.decrypt(access_token).decode(), "refresh_token": fernet.decrypt(refresh_token).decode(), "token_expiry": expiry, "connected": bool(connected) }
+    return {"access_token": fernet.decrypt(access_token).decode(), "refresh_token": fernet.decrypt(refresh_token).decode(), "token_expiry": fernet.decrypt(expiry).decode() , "connected": bool(connected) }
 
 def mark_disconnected(user_id):
-    dbimp.update_rows(table_name , {"connected" : 0 } , {"id" : user_id} )
+    dbimp.update_rows(table_name , {"Connected" : 0 } , {"id" : user_id} )
 
 def build_flow():
     return Flow.from_client_config({"web": { 
@@ -54,14 +59,23 @@ def get_drive_service(user_id):
     tokens = load_tokens(user_id)
     if not tokens or not tokens["connected"]:
         return None
-    creds = Credentials( token=tokens["access_token"], refresh_token=tokens["refresh_token"], token_uri="https://oauth2.googleapis.com/token", client_id=CLIENT_ID, client_secret=CLIENT_SECRET, scopes=SCOPES )
+    expiry = None
+    if tokens["token_expiry"]:
+        expiry = datetime.fromisoformat(tokens["token_expiry"])
+    creds = Credentials( token=tokens["access_token"], refresh_token=tokens["refresh_token"], token_uri="https://oauth2.googleapis.com/token", client_id=CLIENT_ID, client_secret=CLIENT_SECRET, scopes=SCOPES , expiry=expiry )
     if creds.expired:
         try:
             creds.refresh(GoogleRequest())
-            save_tokens(user_id, creds.token, creds.refresh_token, creds.expiry)
-        except RefreshError:
+            Update_token(user_id, creds.token, creds.refresh_token, creds.expiry)
+        except RefreshError:    
             mark_disconnected(user_id)
             return None
+        except TransportError as e: # network-level failure talking to Google — don't disconnect, just fail this call
+            return None
+        except GoogleAuthError as e: # any other auth-library error we didn't anticipate
+            return None
+        except Exception as e: # last-resort catch so a bad response/JSON parse doesn't 500 the route
+            return None 
     return build("drive", "v3", credentials=creds)
 
 def get_or_create_folder(service, folder_name, parent_id=None):
@@ -163,21 +177,20 @@ def upload_file():
         uploaded_file.save(tmp.name)
         tmp_path = tmp.name
     try:
-        platform = request.args.get("platform")       # e.g. "whatsapp", "instagram", "gmail", "linkedin"
-        subfolder = request.args.get("subfolder")      # e.g. "photos", "videos", "pdf", "documents"
+        platform = request.args.get("platform")
+        subfolder = request.args.get("subfolder")
+        parent_id = request.args.get("parent_id")   
         file_metadata = {"name": uploaded_file.filename}
-        if platform not in PLATFORM_FOLDERS:
-            return jsonify({"error": f"invalid platform, must be one of {PLATFORM_FOLDERS}"}), 400
-        if subfolder not in SUBFOLDERS:
-            return jsonify({"error": f"invalid subfolder, must be one of {SUBFOLDERS}"}), 400
-        if platform and subfolder:
+        if platform or subfolder:
+            if platform not in PLATFORM_FOLDERS:
+                return jsonify({"error": f"invalid platform, must be one of {PLATFORM_FOLDERS}"}), 400
+            if subfolder not in SUBFOLDERS:
+                return jsonify({"error": f"invalid subfolder, must be one of {SUBFOLDERS}"}), 400
             platform_id, _ = get_or_create_folder(service, platform)
             sub_id, _ = get_or_create_folder(service, subfolder, parent_id=platform_id)
             file_metadata["parents"] = [sub_id]
-        else:
-            parent_id = request.args.get("parent_id")
-            if parent_id:
-                file_metadata["parents"] = [parent_id]
+        elif parent_id:
+            file_metadata["parents"] = [parent_id]
 
         media = MediaFileUpload(tmp_path, mimetype=uploaded_file.mimetype, resumable=True)
         created_file = service.files().create( body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType" ).execute()
