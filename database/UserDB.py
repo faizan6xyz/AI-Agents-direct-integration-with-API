@@ -18,60 +18,60 @@ try:
 except Exception:
     res = supabase.auth.sign_up({"email": mail, "password": passw})
 
-def create_row(data: dict[str, Any]) -> list[dict]:
+def create_row(TABLE_NAME , data: dict[str, Any]) -> list[dict]:
     response = supabase.table(TABLE_NAME).insert(data).execute()
     return response.data
  
-def create_rows(rows: list[dict[str, Any]]) -> list[dict]:
+def create_rows(TABLE_NAME , rows: list[dict[str, Any]]) -> list[dict]:
     response = supabase.table(TABLE_NAME).insert(rows).execute()
     return response.data
  
-def get_all_rows(limit: int = 100) -> list[dict]:
+def get_all_rows(TABLE_NAME , limit: int = 100) -> list[dict]:
     response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
     return response.data
  
-def get_row_by_id(row_id: int) -> Optional[dict]:
+def get_row_by_id(TABLE_NAME , row_id: int) -> Optional[dict]:
     response = supabase.table(TABLE_NAME).select("*").eq("id", row_id).execute()
     return response.data[0] if response.data else None
  
-def get_rows_by_column(column: str, value: Any) -> list[dict]:
+def get_rows_by_column(TABLE_NAME , column: str, value: Any) -> list[dict]:
     response = supabase.table(TABLE_NAME).select("*").eq(column, value).execute()
     return response.data
  
-def search_rows(column: str, pattern: str) -> list[dict]:
+def search_rows(TABLE_NAME , column: str, pattern: str) -> list[dict]:
     response = supabase.table(TABLE_NAME).select("*").ilike(column, f"%{pattern}%").execute()
     return response.data
  
-def get_rows_paginated(page: int = 1, page_size: int = 20) -> list[dict]:
+def get_rows_paginated(TABLE_NAME , page: int = 1, page_size: int = 20) -> list[dict]:
     start = (page - 1) * page_size
     end = start + page_size - 1
     response = supabase.table(TABLE_NAME).select("*").range(start, end).execute()
     return response.data
  
-def update_row(row_id: int, updates: dict[str, Any]) -> list[dict]:
+def update_row(TABLE_NAME , row_id: int, updates: dict[str, Any]) -> list[dict]:
     response = supabase.table(TABLE_NAME).update(updates).eq("id", row_id).execute()
     return response.data
 
-def upsert_row(data: dict[str, Any]) -> list[dict]:
+def upsert_row(TABLE_NAME , data: dict[str, Any]) -> list[dict]:
     response = supabase.table(TABLE_NAME).upsert(data).execute()
     return response.data
  
-def delete_row(row_id: int) -> list[dict]:
+def delete_row(TABLE_NAME , row_id: int) -> list[dict]:
     response = supabase.table(TABLE_NAME).delete().eq("id", row_id).execute()
     return response.data
  
-def delete_rows_by_column(column: str, value: Any) -> list[dict]:
+def delete_rows_by_column(TABLE_NAME , column: str, value: Any) -> list[dict]:
     response = supabase.table(TABLE_NAME).delete().eq(column, value).execute()
     return response.data
  
-def count_rows(column: Optional[str] = None, value: Any = None) -> int:
+def count_rows(TABLE_NAME , column: Optional[str] = None, value: Any = None) -> int:
     query = supabase.table(TABLE_NAME).select("*", count="exact")
     if column is not None:
         query = query.eq(column, value)
     response = query.execute()
     return response.count
  
-def row_exists(column: str, value: Any) -> bool:
+def row_exists(TABLE_NAME , column: str, value: Any) -> bool:
     response = (
         supabase.table(TABLE_NAME)
         .select("id", count="exact")
@@ -81,7 +81,7 @@ def row_exists(column: str, value: Any) -> bool:
     )
     return (response.count or 0) > 0
  
-def get_rows_ordered(order_by: str, ascending: bool = True, limit: int = 100) -> list[dict]:
+def get_rows_ordered(TABLE_NAME , order_by: str, ascending: bool = True, limit: int = 100) -> list[dict]:
     response = (
         supabase.table(TABLE_NAME)
         .select("*")
@@ -91,14 +91,14 @@ def get_rows_ordered(order_by: str, ascending: bool = True, limit: int = 100) ->
     )
     return response.data
  
-def get_rows_multi_filter(filters: dict[str, Any], limit: int = 100) -> list[dict]:
+def get_rows_multi_filter(TABLE_NAME , filters: dict[str, Any], limit: int = 100) -> list[dict]:
     query = supabase.table(TABLE_NAME).select("*")
     for column, value in filters.items():
         query = query.eq(column, value)
     response = query.limit(limit).execute()
     return response.data
  
-def get_rows_in_range(column: str, low: Any, high: Any) -> list[dict]:
+def get_rows_in_range(TABLE_NAME , column: str, low: Any, high: Any) -> list[dict]:
     response = (
         supabase.table(TABLE_NAME)
         .select("*")
@@ -108,17 +108,17 @@ def get_rows_in_range(column: str, low: Any, high: Any) -> list[dict]:
     )
     return response.data
  
-def increment_column(row_id: int, column: str, amount: int = 1) -> list[dict]:
+def increment_column(TABLE_NAME , row_id: int, column: str, amount: int = 1) -> list[dict]:
     response = supabase.rpc(
         "increment", {"row_id": row_id, "column_name": column, "amount": amount}
     ).execute()
     return response.data
  
-def call_rpc(function_name: str, params: dict[str, Any]) -> Any:
+def call_rpc(TABLE_NAME , function_name: str, params: dict[str, Any]) -> Any:
     response = supabase.rpc(function_name, params).execute()
     return response.data
  
-def full_text_search(column: str, query_text: str) -> list[dict]:
+def full_text_search(TABLE_NAME , column: str, query_text: str) -> list[dict]:
     response = (
         supabase.table(TABLE_NAME)
         .select("*")
@@ -127,15 +127,15 @@ def full_text_search(column: str, query_text: str) -> list[dict]:
     )
     return response.data
  
-def get_related_rows(local_column: str, foreign_table: str, select: str = "*") -> list[dict]:
+def get_related_rows(TABLE_NAME , local_column: str, foreign_table: str, select: str = "*") -> list[dict]:
     response = supabase.table(TABLE_NAME).select(select).execute()
     return response.data
  
-def batch_upsert(rows: list[dict[str, Any]], on_conflict: str = "id") -> list[dict]:
+def batch_upsert(TABLE_NAME , rows: list[dict[str, Any]], on_conflict: str = "id") -> list[dict]:
     response = supabase.table(TABLE_NAME).upsert(rows, on_conflict=on_conflict).execute()
     return response.data
  
-def subscribe_to_changes(callback) -> Any:
+def subscribe_to_changes(TABLE_NAME , callback) -> Any:
     channel = (
         supabase.channel(f"realtime:{TABLE_NAME}")
         .on_postgres_changes(
