@@ -1,7 +1,6 @@
 import os
 import io
 from datetime import datetime
-import sqlite3
 from flask import Flask, request, redirect, jsonify, send_file
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload

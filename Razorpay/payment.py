@@ -3,6 +3,7 @@ import time
 import json
 import hmac
 import hashlib
+from datetime import datetime, timezone
 import logging
 import sqlite3
 import functools
@@ -12,36 +13,48 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import requests
 from supabase import create_client, Client
+import database.UserDB as dbimp
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("payment")
 app = Flask(__name__)
+timezone_new = datetime.now().astimezone()
 
 def _require(key):
     val = os.environ.get(key)
     if not val:
         raise RuntimeError(f"Missing required environment variable: {key}")
     return val
-
+SUPABASE_URL = _require("SUPABASE_URL")
+SUPABASE_KEY = _require("SUPABASE_KEY")
+mail = _require("email")
+passw = _require("pass")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_NAME = "Razorpay"
+try:
+    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
+except Exception:
+    res = supabase.auth.sign_up({"email": mail, "password": passw})
 KEY_ID = _require("RAZORPAY_KEY_ID")
 KEY_SECRET = _require("RAZORPAY_KEY_SECRET")
 WEBHOOK_SECRET = _require("RAZORPAY_WEBHOOK_SECRET")
 RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 INTERNAL_API_KEY = _require("INTERNAL_API_KEY")
+Plan = _require("RAZORPAY_Plan")
 app.secret_key = _require("FLASK_SECRET_KEY")
-app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 256 *    1024
 limiter = Limiter( key_func=get_remote_address, app=app, default_limits=[], storage_uri=RATE_LIMIT_STORAGE_URI, )
 BASE_URL = "https://api.razorpay.com/v1"
 AUTH = (KEY_ID, KEY_SECRET)
 DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
 _STORE_TTL_SECONDS = 18 * 60 * 60
-PRICE_TABLE_PAISE = {"basic_monthly": 20000}
-ALLOWED_CURRENCIES = {"INR"}
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_KEY = _require("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-TABLE_NAME = "users"
-
+TABLE_NAME = "RazorPay"
+TABLE_NAME_verify = "Razorpay_verify"
 class RazorpayError(Exception):
     pass
 
@@ -96,64 +109,12 @@ def _require_internal_api_key():
     provided = request.headers.get("X-Internal-Api-Key", "")
     return hmac.compare_digest(provided, INTERNAL_API_KEY)
 
-def _get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=10000;")
-    return conn
-
-def _init_db():
-    with _get_db() as conn:
-        conn.executescript( """CREATE TABLE IF NOT EXISTS processed_webhook_events (
-                                event_id   TEXT PRIMARY KEY,
-                                status     TEXT NOT NULL DEFAULT 'processing',
-                                created_at REAL NOT NULL );
-
-                            CREATE TABLE IF NOT EXISTS order_creation_cache (
-                                idempotency_key TEXT PRIMARY KEY,
-                                response_json   TEXT,
-                                created_at      REAL NOT NULL );
-
-                            CREATE TABLE IF NOT EXISTS orders (
-                                order_id   TEXT PRIMARY KEY,
-                                plan_id    TEXT,
-                                amount     INTEGER,
-                                currency   TEXT,
-                                status     TEXT NOT NULL DEFAULT 'created',
-                                created_at REAL NOT NULL,
-                                updated_at REAL NOT NULL );
-
-                            CREATE TABLE IF NOT EXISTS verify_cache (
-                                payment_id    TEXT PRIMARY KEY,
-                                response_json TEXT NOT NULL,
-                                created_at    REAL NOT NULL);
-
-                            CREATE TRIGGER IF NOT EXISTS processed_webhook_events_clean AFTER INSERT ON processed_webhook_events
-                            BEGIN
-                                DELETE FROM processed_webhook_events WHERE created_at < (strftime('%s', 'now') - 86400);
-                            END;
-
-                            CREATE TRIGGER IF NOT EXISTS order_creation_cache_clean AFTER INSERT ON order_creation_cache
-                            BEGIN
-                                DELETE FROM order_creation_cache WHERE created_at < (strftime('%s', 'now') - 86400);
-                            END;
-
-                            CREATE TRIGGER IF NOT EXISTS verify_cache_clean AFTER INSERT ON verify_cache
-                            BEGIN
-                                DELETE FROM verify_cache WHERE created_at < (strftime('%s', 'now') - 86400);
-                            END;
-
-                            CREATE INDEX IF NOT EXISTS idx_processed_created ON processed_webhook_events(created_at);
-                            CREATE INDEX IF NOT EXISTS idx_ordercache_created ON order_creation_cache(created_at);
-                            CREATE INDEX IF NOT EXISTS idx_verify_created ON verify_cache(created_at); """ )
 
 def _release_idempotency_claim(idempotency_key: str):
     if not idempotency_key:
         return
-    with _get_db() as conn:
-        conn.execute( "DELETE FROM order_creation_cache WHERE idempotency_key = ? AND response_json IS NULL", (idempotency_key,), )
-        conn.commit()
-
+    dbimp.delete_rows(TABLE_NAME_verify , {"Idempotency_key_creation": idempotency_key , "Response_json_creation": ""})
+    
 def _request(method, path, idempotent=True, **kwargs):
     url = f"{BASE_URL}{path}"
     last_exc = None
@@ -184,7 +145,7 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
 @app.route("/checkout")
 def checkout_page():
     plan_id = request.args.get("plan_id", "basic_monthly")
-    if plan_id not in PRICE_TABLE_PAISE:
+    if plan_id not in Plan:
         return jsonify({"error": "invalid_plan_id"}), 400
     return render_template("checkout.html", plan_id=plan_id, key_id=KEY_ID)
 
@@ -196,27 +157,24 @@ def create_payment():
         return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     plan_id = body.get("plan_id")
-    if not plan_id or plan_id not in PRICE_TABLE_PAISE:
+    if not plan_id or plan_id not in Plan:
         return jsonify({"error": "invalid_plan_id"}), 400
-    amount_paise = PRICE_TABLE_PAISE[plan_id]
+    amount_paise = Plan[plan_id]
     currency = body.get("currency", "INR")
-    if currency not in ALLOWED_CURRENCIES:
+    if currency not in Plan["Currency"]:
         return jsonify({"error": "unsupported_currency"}), 400
     receipt = body.get("receipt") or f"rcpt_{int(time.time() * 1000)}"
     idempotency_key = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
-    with _get_db() as conn:
-        conn.commit()
-        if idempotency_key:
-            row = conn.execute( "SELECT response_json FROM order_creation_cache WHERE idempotency_key = ?", (idempotency_key,), ).fetchone()
-            if row:
-                if row[0] is None:
-                    return jsonify({"error": "request_in_progress"}), 409
-                return jsonify(json.loads(row[0]))
-            try:
-                conn.execute( "INSERT INTO order_creation_cache (idempotency_key, response_json, created_at) " "VALUES (?, NULL, ?)", (idempotency_key, time.time()), )
-                conn.commit()
-            except sqlite3.IntegrityError:
+    if idempotency_key:
+        row = dbimp.select_rows(TABLE_NAME_verify , select={"Response_json_creation"} , filters={"Idempotency_key_creation" : idempotency_key})
+        if row:
+            if row[0] is None:
                 return jsonify({"error": "request_in_progress"}), 409
+            return jsonify(json.loads(row[0]))
+        try:
+            dbimp.insert_rows(TABLE_NAME_verify, {"Idempotency_key_creation": idempotency_key , "Response_json_creation" : "" , "Created_at" : timezone_new})
+        except sqlite3.IntegrityError:
+            return jsonify({"error": "request_in_progress"}), 409
     payload = {"amount": amount_paise, "currency": currency, "receipt": receipt, "payment_capture": 1}
     try:
         resp = _request("POST", "/orders", idempotent=False, json=payload)
@@ -233,16 +191,12 @@ def create_payment():
                 "amount": order["amount"],
                 "currency": order["currency"],
                 "key_id": KEY_ID, }
-    now = time.time()
-    with _get_db() as conn:
-        conn.execute( """INSERT OR IGNORE INTO orders
-                        (order_id, plan_id, amount, currency, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'created', ?, ?)""",
-                        (order["id"], plan_id, order["amount"], order["currency"], now, now), ) 
-        conn.commit()
+    dbimp.insert_rows
+    row = dbimp.select_rows(TABLE_NAME , select={"Order_id" } , filters={"Order_id" : order["id"]})
+    if not row :
+        dbimp.insert_rows(TABLE_NAME , {'Order_id': order["id"], "Plan_id": Plan[plan_id] , "Status" : "created" , "Updates_at" :timezone_new } )
     if idempotency_key:
-        with _get_db() as conn:
-            conn.execute( "UPDATE order_creation_cache SET response_json = ?, created_at = ? WHERE idempotency_key = ?", (json.dumps(result), time.time(), idempotency_key), )
-            conn.commit()
+        dbimp.update_rows(TABLE_NAME_verify , {"Response_json_creation" : json.dumps(result) , "Created_at" : timezone_new } , {"Idempotency_key_creation" : idempotency_key})
     return jsonify(result)
 
 @app.route("/api/payment/verify", methods=["POST"])
@@ -257,11 +211,9 @@ def verify_payment():
     if not verify_payment_signature(order_id, payment_id, signature):
         logger.warning("invalid_signature order_id=%s payment_id=%s", order_id, payment_id)
         return jsonify({"error": "invalid_signature"}), 400
-    with _get_db() as conn:
-        conn.commit()
-        row = conn.execute( "SELECT response_json FROM verify_cache WHERE payment_id = ?", (payment_id,) ).fetchone()
-        if row:
-            return jsonify(json.loads(row[0]))
+    row  = dbimp.select_rows(TABLE_NAME_verify  , select={"Response_json_verify"} , filters={"Payment_id_verify": payment_id})
+    if row:
+        return jsonify(json.loads(row[0]))
     try:
         resp = _request("GET", f"/payments/{payment_id}")
     except RazorpayError as e:
@@ -274,9 +226,7 @@ def verify_payment():
     result = {"status": "Payment Done"} if status == "captured" else {"status": status}
     _TERMINAL_STATUSES = {"captured", "failed"}
     if status in _TERMINAL_STATUSES:
-        with _get_db() as conn:
-            conn.execute( """INSERT OR REPLACE INTO verify_cache (payment_id, response_json, created_at) VALUES (?, ?, ?)""", (payment_id, json.dumps(result), time.time()), )
-            conn.commit()
+        dbimp.insert_rows(TABLE_NAME_verify , {"Payment_id_verify":payment_id,"Response_json_verify": json.dumps(result)})
     return jsonify(result)
 
 @app.route("/api/payment/status/<payment_id>", methods=["GET"])
@@ -333,9 +283,7 @@ def capture_payment(payment_id):
 def _set_order_status(order_id: str, status: str):
     if not order_id:
         return
-    with _get_db() as conn:
-        conn.execute( "UPDATE orders SET status = ?, updated_at = ? WHERE order_id = ?", (status, time.time(), order_id),)
-        conn.commit()
+    dbimp.update_rows(TABLE_NAME , {"Status" : status , "Updates_at" : timezone_new } , {"Order_id" : order_id})
 
 def _handle_payment_captured(event: dict):
     payment_entity = event.get("payload", {}).get("payment", {}).get("entity", {})
@@ -375,19 +323,7 @@ def razorpay_webhook():
     if not event_id:
         return jsonify({"error": "missing_event_id"}), 400
     event_type = event.get("event")
-    with _get_db() as conn:
-        conn.commit()
-        try:
-            conn.execute( """INSERT INTO processed_webhook_events (event_id, status, created_at) VALUES (?, 'processing', ?)""", (event_id,  time.time()),)
-            conn.commit()
-        except sqlite3.IntegrityError:
-            row = conn.execute( "SELECT status FROM processed_webhook_events WHERE event_id = ?", (event_id,) ).fetchone()
-            existing_status = row[0] if row else None
-            if existing_status == "failed":
-                conn.execute( "UPDATE processed_webhook_events SET status = 'processing', created_at = ? WHERE event_id = ?", (time.time(), event_id), )
-                conn.commit()
-            else:
-                return jsonify({"received": True, "duplicate": True}), 200
+    dbimp.insert_rows(TABLE_NAME_verify , {"Event_id_webhook": event_id , "Status_webhook" : "processing"})
     try:
         handler = _WEBHOOK_HANDLERS.get(event_type)
         if handler:
@@ -396,20 +332,15 @@ def razorpay_webhook():
             logger.info("Unhandled webhook  event_id=%s", event_id)
     except Exception as e:
         logger.error("processing_failed for event_id=%s: %s", event_id, e)
-        with _get_db() as conn:
-            conn.execute("UPDATE processed_webhook_events SET status = 'failed' WHERE event_id = ?", (event_id,))
-            conn.commit()
+        dbimp.update_rows(TABLE_NAME_verify , {"Status_webhook" : "failed"} , {"Event_id_webhook": event_id})
         return jsonify({"error": "processing_failed", "details": str(e)}), 500
-    with _get_db() as conn:
-        conn.execute("UPDATE processed_webhook_events SET status = 'done' WHERE event_id = ?", (event_id,))
-        conn.commit()
+    dbimp.update_rows(TABLE_NAME_verify , {"Status_webhook": "done"}, {"Event_id_webhook": event_id})
     return jsonify({"received": True}), 200
 
 @app.route("/healthz")
 def healthz():
     try:
-        with _get_db() as conn:
-            conn.execute("SELECT 1").fetchone()
+        supabase.table("users").select("id").limit(1).execute()  # hardcoded
         return jsonify({"ok": True})
     except Exception as e:
         logger.error("healthz_failed: %s", e)
@@ -419,8 +350,6 @@ def healthz():
 def handle_unexpected_error(e):
     logger.exception("Unhandled exception")
     return jsonify({"error": "internal_error", "details": str(e)}), 500
-
-_init_db()
 
 if __name__ == "__main__":
     # Local dev only. In production run:
