@@ -41,7 +41,10 @@ KEY_SECRET = _require("RAZORPAY_KEY_SECRET")
 WEBHOOK_SECRET = _require("RAZORPAY_WEBHOOK_SECRET")
 RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 INTERNAL_API_KEY = _require("INTERNAL_API_KEY")
-Plan = _require("RAZORPAY_Plan")
+try:
+    Plan = json.loads(_require("RAZORPAY_Plan"))
+except json.JSONDecodeError as e:
+    raise RuntimeError(f"RAZORPAY_Plan env var is not valid JSON: {e}") from e
 app.secret_key = _require("FLASK_SECRET_KEY")
 app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=[], storage_uri=RATE_LIMIT_STORAGE_URI)
@@ -105,7 +108,7 @@ def _require_internal_api_key():
 def _release_idempotency_claim(idempotency_key: str):
     if not idempotency_key:
         return
-    dbimp.delete_rows( TABLE_NAME_verify,{"Idempotency_key_creation": idempotency_key, "Response_json_creation": ""},)
+    dbimp.delete_rows( TABLE_NAME_verify,{"Idempotency_key_creation": idempotency_key, "Response_json_creation": ""}, )
 
 def _request(method, path, idempotent=True, **kwargs):
     url = f"{BASE_URL}{path}"
@@ -119,7 +122,7 @@ def _request(method, path, idempotent=True, **kwargs):
                 raise RazorpayError(f"Network error after retries: {e}") from e
             time.sleep(1.5 * (attempt + 1))
             continue
-        if resp.status_code >= 500 and attempt < 2:
+        if resp.status_code >= 500 and idempotent and attempt < 2:
             time.sleep(1.5 * (attempt + 1))
             continue
         return resp
@@ -151,20 +154,21 @@ def create_payment():
     plan_id = body.get("plan_id")
     if not plan_id or plan_id not in Plan:
         return jsonify({"error": "invalid_plan_id"}), 400
-    amount_paise = Plan[plan_id]
-    currency = body.get("currency", "INR")
-    if currency not in Plan["Currency"]:
+    plan = Plan[plan_id]
+    amount_paise = plan["amount"]
+    currency = body.get("currency", plan["currency"])
+    if currency != plan["currency"]:
         return jsonify({"error": "unsupported_currency"}), 400
     receipt = body.get("receipt") or f"rcpt_{int(time.time() * 1000)}"
     idempotency_key = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
     if idempotency_key:
-        row = dbimp.select_rows( TABLE_NAME_verify, select={"Response_json_creation"}, filters={"Idempotency_key_creation": idempotency_key}, )
+        row = dbimp.select_rows( TABLE_NAME_verify, select={"Response_json_creation"}, filters={"Idempotency_key_creation": idempotency_key},)
         if row:
             if row[0] is None or row[0] == "":
                 return jsonify({"error": "request_in_progress"}), 409
             return jsonify(json.loads(row[0]))
         try:
-            dbimp.insert_rows(TABLE_NAME_verify, {"Idempotency_key_creation": idempotency_key, "Response_json_creation": "", "Created_at": _now(), },)
+            dbimp.insert_rows(TABLE_NAME_verify, {"Idempotency_key_creation": idempotency_key, "Response_json_creation": "", "Created_at": _now()},)
         except Exception:
             return jsonify({"error": "request_in_progress"}), 409
     payload = {"amount": amount_paise, "currency": currency, "receipt": receipt, "payment_capture": 1}
@@ -179,12 +183,12 @@ def create_payment():
         _release_idempotency_claim(idempotency_key)
         return jsonify({"error": "order_creation_failed", "details": resp.text}), 502
     order = resp.json()
-    result = {"order_id": order["id"],"amount": order["amount"],"currency": order["currency"], "key_id": KEY_ID,}
+    result = {"order_id": order["id"], "amount": order["amount"], "currency": order["currency"], "key_id": KEY_ID}
     row = dbimp.select_rows(TABLE_NAME, select={"Order_id"}, filters={"Order_id": order["id"]})
     if not row:
-        dbimp.insert_rows( TABLE_NAME, {"Order_id": order["id"], "Plan_id": plan_id,"Status": "created", "Updates_at": _now(),},)
+        dbimp.insert_rows(TABLE_NAME, {"Order_id": order["id"], "Plan_id": plan_id, "Status": "created", "Updates_at": _now()})
     if idempotency_key:
-        dbimp.update_rows(TABLE_NAME_verify,{"Response_json_creation": json.dumps(result), "Created_at": _now()},{"Idempotency_key_creation": idempotency_key},)
+        dbimp.update_rows( TABLE_NAME_verify , {"Response_json_creation": json.dumps(result), "Created_at": _now()}, {"Idempotency_key_creation": idempotency_key},)
     return jsonify(result)
 
 @app.route("/api/payment/verify", methods=["POST"])
@@ -242,6 +246,8 @@ def payment_status(payment_id):
 @limiter.limit("10 per minute")
 @require_user
 def capture_payment(payment_id):
+    if not _require_internal_api_key():
+        return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     try:
         status_resp = _request("GET", f"/payments/{payment_id}")
@@ -294,7 +300,7 @@ def _handle_order_paid(event: dict):
     logger.info("order.paid received for order_id=%s", order_id)
     _set_order_status(order_id, "paid")
 
-_WEBHOOK_HANDLERS = {"payment.captured": _handle_payment_captured,"payment.failed": _handle_payment_failed,"order.paid": _handle_order_paid,}
+_WEBHOOK_HANDLERS = {"payment.captured": _handle_payment_captured, "payment.failed": _handle_payment_failed, "order.paid": _handle_order_paid, }
 
 @app.route("/api/razorpay/webhook", methods=["POST"])
 @limiter.limit("120 per minute")
