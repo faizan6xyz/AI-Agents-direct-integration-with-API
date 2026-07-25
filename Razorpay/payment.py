@@ -5,7 +5,6 @@ import hmac
 import hashlib
 from datetime import datetime, timezone
 import logging
-import sqlite3
 import functools
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
@@ -18,21 +17,21 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("payment")
 app = Flask(__name__)
-timezone_new = datetime.now().astimezone()
+
+def _now():
+    return datetime.now(timezone.utc)
 
 def _require(key):
     val = os.environ.get(key)
     if not val:
         raise RuntimeError(f"Missing required environment variable: {key}")
     return val
+
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_KEY = _require("SUPABASE_KEY")
 mail = _require("email")
 passw = _require("pass")
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-TABLE_NAME = "Razorpay"
 try:
     res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
 except Exception:
@@ -44,17 +43,13 @@ RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 INTERNAL_API_KEY = _require("INTERNAL_API_KEY")
 Plan = _require("RAZORPAY_Plan")
 app.secret_key = _require("FLASK_SECRET_KEY")
-app.config["MAX_CONTENT_LENGTH"] = 256 *    1024
-limiter = Limiter( key_func=get_remote_address, app=app, default_limits=[], storage_uri=RATE_LIMIT_STORAGE_URI, )
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
+limiter = Limiter(key_func=get_remote_address, app=app, default_limits=[], storage_uri=RATE_LIMIT_STORAGE_URI)
 BASE_URL = "https://api.razorpay.com/v1"
 AUTH = (KEY_ID, KEY_SECRET)
-DB_PATH = os.environ.get("PAYMENT_DB_PATH", "payments.db")
-_STORE_TTL_SECONDS = 18 * 60 * 60
-SUPABASE_URL = _require("SUPABASE_URL")
-SUPABASE_KEY = _require("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-TABLE_NAME = "RazorPay"
+TABLE_NAME = "Razorpay"
 TABLE_NAME_verify = "Razorpay_verify"
+
 class RazorpayError(Exception):
     pass
 
@@ -73,9 +68,7 @@ def login():
         return jsonify({"error": "invalid_credentials"}), 401
     if not res or not res.session or not res.user:
         return jsonify({"error": "invalid_credentials"}), 401
-    return jsonify( { "access_token": res.session.access_token, 
-                     "refresh_token": res.session.refresh_token, 
-                     "user_id": res.user.id, })
+    return jsonify({ "access_token": res.session.access_token, "refresh_token": res.session.refresh_token, "user_id": res.user.id, })
 
 @app.route("/api/logout", methods=["POST"])
 def logout():
@@ -109,12 +102,11 @@ def _require_internal_api_key():
     provided = request.headers.get("X-Internal-Api-Key", "")
     return hmac.compare_digest(provided, INTERNAL_API_KEY)
 
-
 def _release_idempotency_claim(idempotency_key: str):
     if not idempotency_key:
         return
-    dbimp.delete_rows(TABLE_NAME_verify , {"Idempotency_key_creation": idempotency_key , "Response_json_creation": ""})
-    
+    dbimp.delete_rows( TABLE_NAME_verify,{"Idempotency_key_creation": idempotency_key, "Response_json_creation": ""},)
+
 def _request(method, path, idempotent=True, **kwargs):
     url = f"{BASE_URL}{path}"
     last_exc = None
@@ -166,14 +158,14 @@ def create_payment():
     receipt = body.get("receipt") or f"rcpt_{int(time.time() * 1000)}"
     idempotency_key = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
     if idempotency_key:
-        row = dbimp.select_rows(TABLE_NAME_verify , select={"Response_json_creation"} , filters={"Idempotency_key_creation" : idempotency_key})
+        row = dbimp.select_rows( TABLE_NAME_verify, select={"Response_json_creation"}, filters={"Idempotency_key_creation": idempotency_key}, )
         if row:
-            if row[0] is None:
+            if row[0] is None or row[0] == "":
                 return jsonify({"error": "request_in_progress"}), 409
             return jsonify(json.loads(row[0]))
         try:
-            dbimp.insert_rows(TABLE_NAME_verify, {"Idempotency_key_creation": idempotency_key , "Response_json_creation" : "" , "Created_at" : timezone_new})
-        except sqlite3.IntegrityError:
+            dbimp.insert_rows(TABLE_NAME_verify, {"Idempotency_key_creation": idempotency_key, "Response_json_creation": "", "Created_at": _now(), },)
+        except Exception:
             return jsonify({"error": "request_in_progress"}), 409
     payload = {"amount": amount_paise, "currency": currency, "receipt": receipt, "payment_capture": 1}
     try:
@@ -187,16 +179,12 @@ def create_payment():
         _release_idempotency_claim(idempotency_key)
         return jsonify({"error": "order_creation_failed", "details": resp.text}), 502
     order = resp.json()
-    result = {  "order_id": order["id"],
-                "amount": order["amount"],
-                "currency": order["currency"],
-                "key_id": KEY_ID, }
-    dbimp.insert_rows
-    row = dbimp.select_rows(TABLE_NAME , select={"Order_id" } , filters={"Order_id" : order["id"]})
-    if not row :
-        dbimp.insert_rows(TABLE_NAME , {'Order_id': order["id"], "Plan_id": Plan[plan_id] , "Status" : "created" , "Updates_at" :timezone_new } )
+    result = {"order_id": order["id"],"amount": order["amount"],"currency": order["currency"], "key_id": KEY_ID,}
+    row = dbimp.select_rows(TABLE_NAME, select={"Order_id"}, filters={"Order_id": order["id"]})
+    if not row:
+        dbimp.insert_rows( TABLE_NAME, {"Order_id": order["id"], "Plan_id": plan_id,"Status": "created", "Updates_at": _now(),},)
     if idempotency_key:
-        dbimp.update_rows(TABLE_NAME_verify , {"Response_json_creation" : json.dumps(result) , "Created_at" : timezone_new } , {"Idempotency_key_creation" : idempotency_key})
+        dbimp.update_rows(TABLE_NAME_verify,{"Response_json_creation": json.dumps(result), "Created_at": _now()},{"Idempotency_key_creation": idempotency_key},)
     return jsonify(result)
 
 @app.route("/api/payment/verify", methods=["POST"])
@@ -211,7 +199,7 @@ def verify_payment():
     if not verify_payment_signature(order_id, payment_id, signature):
         logger.warning("invalid_signature order_id=%s payment_id=%s", order_id, payment_id)
         return jsonify({"error": "invalid_signature"}), 400
-    row  = dbimp.select_rows(TABLE_NAME_verify  , select={"Response_json_verify"} , filters={"Payment_id_verify": payment_id})
+    row = dbimp.select_rows(TABLE_NAME_verify, select={"Response_json_verify"}, filters={"Payment_id_verify": payment_id})
     if row:
         return jsonify(json.loads(row[0]))
     try:
@@ -226,7 +214,7 @@ def verify_payment():
     result = {"status": "Payment Done"} if status == "captured" else {"status": status}
     _TERMINAL_STATUSES = {"captured", "failed"}
     if status in _TERMINAL_STATUSES:
-        dbimp.insert_rows(TABLE_NAME_verify , {"Payment_id_verify":payment_id,"Response_json_verify": json.dumps(result)})
+        dbimp.insert_rows(TABLE_NAME_verify, {"Payment_id_verify": payment_id, "Response_json_verify": json.dumps(result)})
     return jsonify(result)
 
 @app.route("/api/payment/status/<payment_id>", methods=["GET"])
@@ -267,8 +255,8 @@ def capture_payment(payment_id):
         amount_paise = status_resp.json().get("amount")
         currency = status_resp.json().get("currency", "INR")
         if body.get("amount") is not None:
-            logger.warning( "capture_payment received client-supplied amount for payment_id=%s; ignoring it", payment_id )
-        resp = _request( "POST", f"/payments/{payment_id}/capture", idempotent=False, json={"amount": amount_paise, "currency": currency}, )
+            logger.warning("capture_payment received client-supplied amount for payment_id=%s; ignoring it", payment_id)
+        resp = _request("POST", f"/payments/{payment_id}/capture", idempotent=False, json={"amount": amount_paise, "currency": currency})
     except RazorpayError as e:
         logger.error("razorpay_unavailable during capture: %s", e)
         return jsonify({"error": "razorpay_unavailable", "details": str(e)}), 503
@@ -283,7 +271,7 @@ def capture_payment(payment_id):
 def _set_order_status(order_id: str, status: str):
     if not order_id:
         return
-    dbimp.update_rows(TABLE_NAME , {"Status" : status , "Updates_at" : timezone_new } , {"Order_id" : order_id})
+    dbimp.update_rows(TABLE_NAME, {"Status": status, "Updates_at": _now()}, {"Order_id": order_id})
 
 def _handle_payment_captured(event: dict):
     payment_entity = event.get("payload", {}).get("payment", {}).get("entity", {})
@@ -306,7 +294,7 @@ def _handle_order_paid(event: dict):
     logger.info("order.paid received for order_id=%s", order_id)
     _set_order_status(order_id, "paid")
 
-_WEBHOOK_HANDLERS = { "payment.captured": _handle_payment_captured, "payment.failed": _handle_payment_failed, "order.paid": _handle_order_paid, }
+_WEBHOOK_HANDLERS = {"payment.captured": _handle_payment_captured,"payment.failed": _handle_payment_failed,"order.paid": _handle_order_paid,}
 
 @app.route("/api/razorpay/webhook", methods=["POST"])
 @limiter.limit("120 per minute")
@@ -323,24 +311,34 @@ def razorpay_webhook():
     if not event_id:
         return jsonify({"error": "missing_event_id"}), 400
     event_type = event.get("event")
-    dbimp.insert_rows(TABLE_NAME_verify , {"Event_id_webhook": event_id , "Status_webhook" : "processing"})
+    existing = dbimp.select_rows(TABLE_NAME_verify, select={"Status_webhook"}, filters={"Event_id_webhook": event_id})
+    if existing:
+        prior_status = existing[0]
+        if prior_status == "done":
+            return jsonify({"received": True, "duplicate": True}), 200
+        if prior_status == "processing":
+            return jsonify({"error": "processing_in_progress"}), 409
+    try:
+        dbimp.insert_rows(TABLE_NAME_verify, {"Event_id_webhook": event_id, "Status_webhook": "processing"})
+    except Exception:
+        return jsonify({"error": "processing_in_progress"}), 409
     try:
         handler = _WEBHOOK_HANDLERS.get(event_type)
         if handler:
             handler(event)
         else:
-            logger.info("Unhandled webhook  event_id=%s", event_id)
+            logger.info("Unhandled webhook event_id=%s", event_id)
     except Exception as e:
         logger.error("processing_failed for event_id=%s: %s", event_id, e)
-        dbimp.update_rows(TABLE_NAME_verify , {"Status_webhook" : "failed"} , {"Event_id_webhook": event_id})
+        dbimp.update_rows(TABLE_NAME_verify, {"Status_webhook": "failed"}, {"Event_id_webhook": event_id})
         return jsonify({"error": "processing_failed", "details": str(e)}), 500
-    dbimp.update_rows(TABLE_NAME_verify , {"Status_webhook": "done"}, {"Event_id_webhook": event_id})
+    dbimp.update_rows(TABLE_NAME_verify, {"Status_webhook": "done"}, {"Event_id_webhook": event_id})
     return jsonify({"received": True}), 200
 
 @app.route("/healthz")
 def healthz():
     try:
-        supabase.table("users").select("id").limit(1).execute()  # hardcoded
+        supabase.table("users").select("id").limit(1).execute()
         return jsonify({"ok": True})
     except Exception as e:
         logger.error("healthz_failed: %s", e)
