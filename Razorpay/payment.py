@@ -106,7 +106,6 @@ def _init_db():
     with _get_db() as conn:
         conn.executescript( """CREATE TABLE IF NOT EXISTS processed_webhook_events (
                                 event_id   TEXT PRIMARY KEY,
-                                event_type TEXT,
                                 status     TEXT NOT NULL DEFAULT 'processing',
                                 created_at REAL NOT NULL );
 
@@ -379,7 +378,7 @@ def razorpay_webhook():
     with _get_db() as conn:
         conn.commit()
         try:
-            conn.execute( """INSERT INTO processed_webhook_events (event_id, event_type, status, created_at) VALUES (?, ?, 'processing', ?)""", (event_id, event_type, time.time()),)
+            conn.execute( """INSERT INTO processed_webhook_events (event_id, status, created_at) VALUES (?, 'processing', ?)""", (event_id,  time.time()),)
             conn.commit()
         except sqlite3.IntegrityError:
             row = conn.execute( "SELECT status FROM processed_webhook_events WHERE event_id = ?", (event_id,) ).fetchone()
@@ -394,7 +393,7 @@ def razorpay_webhook():
         if handler:
             handler(event)
         else:
-            logger.info("Unhandled webhook event_type=%s event_id=%s", event_type, event_id)
+            logger.info("Unhandled webhook  event_id=%s", event_id)
     except Exception as e:
         logger.error("processing_failed for event_id=%s: %s", event_id, e)
         with _get_db() as conn:
