@@ -86,10 +86,10 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(""" CREATE TABLE IF NOT EXISTS carts ( 
-                                cart_id TEXT PRIMARY KEY,
-                                user_id TEXT NOT NULL,
-                                amount TEXT NOT NULL,
-                                currency TEXT NOT NULL );
+                                    cart_id TEXT PRIMARY KEY,
+                                    user_id TEXT NOT NULL,
+                                    amount TEXT NOT NULL,
+                                    currency TEXT NOT NULL );
                         
                                 CREATE TABLE IF NOT EXISTS orders (
                                     paypal_order_id TEXT PRIMARY KEY,
