@@ -12,54 +12,34 @@ from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 from itsdangerous import URLSafeSerializer, BadSignature
 from cryptography.fernet import Fernet
+import database.UserDB as dbimp
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-DB_PATH = "drive_accounts.db"
+SCOPES = { "GOOGLE_DRIVE_SCOPES":"https://www.googleapis.com/auth/drive.file"}
 fernet = Fernet(os.environ["FERNET_KEY"].encode())
 serializer = URLSafeSerializer(app.secret_key)
+table_name = "Drive" 
 PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
 SUBFOLDERS = ["photos", "videos", "pdf", "documents"]
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(""" CREATE TABLE IF NOT EXISTS drive_accounts (
-                        user_id TEXT PRIMARY KEY,
-                        access_token BLOB NOT NULL,
-                        refresh_token BLOB NOT NULL,
-                        token_expiry TEXT,
-                        connected INTEGER DEFAULT 1 ) """)
-    conn.commit()
-    conn.close()
 
 def save_tokens(user_id, access_token, refresh_token, expiry):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(""" INSERT INTO drive_accounts (user_id, access_token, refresh_token, token_expiry, connected)
-                    VALUES (?, ?, ?, ?, 1)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        access_token = excluded.access_token,
-                        refresh_token = excluded.refresh_token,
-                        token_expiry = excluded.token_expiry,
-                        connected = 1 """, ( user_id, fernet.encrypt(access_token.encode()),fernet.encrypt(refresh_token.encode()), expiry.isoformat() if expiry else None ))
-    conn.commit()
-    conn.close()
+    dbimp.insert_rows(table_name, {"id" : user_id , "Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token" : fernet.encrypt(refresh_token.encode()) , "Token_expire" : expiry.isoformat() if expiry else None, "Connected" : 1 , "Scopes" : SCOPES})
 
 def load_tokens(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute( "SELECT access_token, refresh_token, token_expiry, connected FROM drive_accounts WHERE user_id = ?", (user_id,) ).fetchone()
-    conn.close()
-    if not row:
+    row = dbimp.select_rows(table_name , filters= {"id" : user_id})
+    if not row :
         return None
-    access_token, refresh_token, expiry, connected = row
+    access_token = row["Access_token"]
+    refresh_token = row["Refresh_token"]
+    expiry = row["Token_expire"]
+    connected = row["Connected"]
     return {"access_token": fernet.decrypt(access_token).decode(), "refresh_token": fernet.decrypt(refresh_token).decode(), "token_expiry": expiry, "connected": bool(connected) }
 
 def mark_disconnected(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE drive_accounts SET connected = 0 WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
+    dbimp.update_rows(table_name , {"connected" : 0 } , {"id" : user_id} )
 
 def build_flow():
     return Flow.from_client_config({"web": { 
@@ -186,7 +166,10 @@ def upload_file():
         platform = request.args.get("platform")       # e.g. "whatsapp", "instagram", "gmail", "linkedin"
         subfolder = request.args.get("subfolder")      # e.g. "photos", "videos", "pdf", "documents"
         file_metadata = {"name": uploaded_file.filename}
-
+        if platform not in PLATFORM_FOLDERS:
+            return jsonify({"error": f"invalid platform, must be one of {PLATFORM_FOLDERS}"}), 400
+        if subfolder not in SUBFOLDERS:
+            return jsonify({"error": f"invalid subfolder, must be one of {SUBFOLDERS}"}), 400
         if platform and subfolder:
             platform_id, _ = get_or_create_folder(service, platform)
             sub_id, _ = get_or_create_folder(service, subfolder, parent_id=platform_id)
@@ -197,9 +180,7 @@ def upload_file():
                 file_metadata["parents"] = [parent_id]
 
         media = MediaFileUpload(tmp_path, mimetype=uploaded_file.mimetype, resumable=True)
-        created_file = service.files().create(
-            body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType"
-        ).execute()
+        created_file = service.files().create( body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType" ).execute()
     except HttpError as e:
         return jsonify({"error": "drive upload failed", "detail": str(e)}), 400
     finally:
@@ -225,6 +206,5 @@ def delete_file():
     return jsonify({"user_id": user_id, "file_id": file_id, "status": "deleted"})
 
 if __name__ == "__main__":
-    init_db()
     # for server        gunicorn -w 4 -b 0.0.0.0:8080 app:app
     app.run(host="0.0.0.0", port=8080, debug=True)
