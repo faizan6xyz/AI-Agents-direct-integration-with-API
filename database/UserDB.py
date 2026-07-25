@@ -18,137 +18,83 @@ try:
 except Exception:
     res = supabase.auth.sign_up({"email": mail, "password": passw})
 
-def create_row(TABLE_NAME , data: dict[str, Any]) -> list[dict]:
-    response = supabase.table(TABLE_NAME).insert(data).execute()
-    return response.data
- 
-def create_rows(TABLE_NAME , rows: list[dict[str, Any]]) -> list[dict]:
-    response = supabase.table(TABLE_NAME).insert(rows).execute()
-    return response.data
- 
-def get_all_rows(TABLE_NAME , limit: int = 100) -> list[dict]:
-    response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
-    return response.data
- 
-def get_row_by_id(TABLE_NAME , row_id: int) -> Optional[dict]:
-    response = supabase.table(TABLE_NAME).select("*").eq("id", row_id).execute()
-    return response.data[0] if response.data else None
- 
-def get_rows_by_column(TABLE_NAME , column: str, value: Any) -> list[dict]:
-    response = supabase.table(TABLE_NAME).select("*").eq(column, value).execute()
-    return response.data
- 
-def search_rows(TABLE_NAME , column: str, pattern: str) -> list[dict]:
-    response = supabase.table(TABLE_NAME).select("*").ilike(column, f"%{pattern}%").execute()
-    return response.data
- 
-def get_rows_paginated(TABLE_NAME , page: int = 1, page_size: int = 20) -> list[dict]:
-    start = (page - 1) * page_size
-    end = start + page_size - 1
-    response = supabase.table(TABLE_NAME).select("*").range(start, end).execute()
-    return response.data
- 
-def update_row(TABLE_NAME , row_id: int, updates: dict[str, Any]) -> list[dict]:
-    response = supabase.table(TABLE_NAME).update(updates).eq("id", row_id).execute()
+from typing import Any, Optional
+
+def insert_rows(table_name: str, data: dict[str, Any] | list[dict[str, Any]]) -> list[dict]:
+    response = supabase.table(table_name).insert(data).execute()
     return response.data
 
-def upsert_row(TABLE_NAME , data: dict[str, Any]) -> list[dict]:
-    response = supabase.table(TABLE_NAME).upsert(data).execute()
-    return response.data
- 
-def delete_row(TABLE_NAME , row_id: int) -> list[dict]:
-    response = supabase.table(TABLE_NAME).delete().eq("id", row_id).execute()
-    return response.data
- 
-def delete_rows_by_column(TABLE_NAME , column: str, value: Any) -> list[dict]:
-    response = supabase.table(TABLE_NAME).delete().eq(column, value).execute()
-    return response.data
- 
-def count_rows(TABLE_NAME , column: Optional[str] = None, value: Any = None) -> int:
-    query = supabase.table(TABLE_NAME).select("*", count="exact")
-    if column is not None:
-        query = query.eq(column, value)
-    response = query.execute()
-    return response.count
- 
-def row_exists(TABLE_NAME , column: str, value: Any) -> bool:
-    response = (
-        supabase.table(TABLE_NAME)
-        .select("id", count="exact")
-        .eq(column, value)
-        .limit(1)
-        .execute()
-    )
-    return (response.count or 0) > 0
- 
-def get_rows_ordered(TABLE_NAME , order_by: str, ascending: bool = True, limit: int = 100) -> list[dict]:
-    response = (
-        supabase.table(TABLE_NAME)
-        .select("*")
-        .order(order_by, desc=not ascending)
-        .limit(limit)
-        .execute()
-    )
-    return response.data
- 
-def get_rows_multi_filter(TABLE_NAME , filters: dict[str, Any], limit: int = 100) -> list[dict]:
-    query = supabase.table(TABLE_NAME).select("*")
+def update_rows(table_name: str, updates: dict[str, Any], filters: dict[str, Any]) -> list[dict]:
+    query = supabase.table(table_name).update(updates)
     for column, value in filters.items():
         query = query.eq(column, value)
-    response = query.limit(limit).execute()
+    response = query.execute()
     return response.data
- 
-def get_rows_in_range(TABLE_NAME , column: str, low: Any, high: Any) -> list[dict]:
-    response = (
-        supabase.table(TABLE_NAME)
-        .select("*")
-        .gte(column, low)
-        .lte(column, high)
-        .execute()
-    )
+
+def delete_rows(table_name: str, filters: dict[str, Any]) -> list[dict]:
+    query = supabase.table(table_name).delete()
+    for column, value in filters.items():
+        query = query.eq(column, value)
+    response = query.execute()
     return response.data
- 
-def increment_column(TABLE_NAME , row_id: int, column: str, amount: int = 1) -> list[dict]:
-    response = supabase.rpc(
-        "increment", {"row_id": row_id, "column_name": column, "amount": amount}
-    ).execute()
+
+def select_rows( table_name: str, filters: Optional[dict[str, Any]] = None, select: str = "*", order_by: Optional[str] = None, ascending: bool = True, limit: Optional[int] = None,) -> list[dict]:
+    query = supabase.table(table_name).select(select)
+    if filters:
+        for column, value in filters.items():
+            query = query.eq(column, value)
+    if order_by:
+        query = query.order(order_by, desc=not ascending)
+    if limit:
+        query = query.limit(limit)
+    response = query.execute()
     return response.data
- 
-def call_rpc(TABLE_NAME , function_name: str, params: dict[str, Any]) -> Any:
-    response = supabase.rpc(function_name, params).execute()
-    return response.data
- 
-def full_text_search(TABLE_NAME , column: str, query_text: str) -> list[dict]:
-    response = (
-        supabase.table(TABLE_NAME)
-        .select("*")
-        .text_search(column, query_text)
-        .execute()
-    )
-    return response.data
- 
-def get_related_rows(TABLE_NAME , local_column: str, foreign_table: str, select: str = "*") -> list[dict]:
-    response = supabase.table(TABLE_NAME).select(select).execute()
-    return response.data
- 
-def batch_upsert(TABLE_NAME , rows: list[dict[str, Any]], on_conflict: str = "id") -> list[dict]:
-    response = supabase.table(TABLE_NAME).upsert(rows, on_conflict=on_conflict).execute()
-    return response.data
- 
-def subscribe_to_changes(TABLE_NAME , callback) -> Any:
-    channel = (
-        supabase.channel(f"realtime:{TABLE_NAME}")
-        .on_postgres_changes(
-            event="*", schema="public", table=TABLE_NAME, callback=callback
-        )
-        .subscribe()
-    )
-    return channel
  
 if __name__ == "__main__":
     print("\nFetching all rows...")
-    all_rows = get_all_rows()
+    all_rows = select_rows("users")
     for row in all_rows:
         print(row)
 
+
+# --- INSERT ---
+# Add a single user
+insert_rows("users", {"name": "Ayesha", "email": "ayesha@example.com", "role": "admin"})
+# Bulk insert multiple rows at once (e.g. importing contacts)
+insert_rows("contacts", [
+    {"name": "Ravi", "phone": "9990001111"},
+    {"name": "Meena", "phone": "9990002222"},
+    {"name": "Karan", "phone": "9990003333"},
+])
+# Insert a new order tied to a user
+insert_rows("orders", {"user_id": 12, "product": "Laptop", "amount": 54999, "status": "pending"})
+# --- UPDATE ---
+# Promote a user
+update_rows("users", {"role": "senior"}, {"id": 5})
+# Mark an order as shipped
+update_rows("orders", {"status": "shipped"}, {"id": 101})
+# Update all pending orders for a specific user (multiple filter columns)
+update_rows("orders", {"status": "cancelled"}, {"user_id": 12, "status": "pending"})
+# Deactivate a user by email instead of id
+update_rows("users", {"is_active": False}, {"email": "ayesha@example.com"})
+# --- DELETE ---
+# Delete a single row by id
+delete_rows("users", {"id": 5})
+# Delete all orders belonging to a user
+delete_rows("orders", {"user_id": 12})
+# Delete rows matching multiple conditions (e.g. clean up old failed jobs)
+delete_rows("jobs", {"status": "failed", "retry_count": 3})
+# --- SELECT (with conditions) ---
+# Get all admins
+select_rows("users", filters={"role": "admin"})
+# Get a user's orders, most recent first
+select_rows("orders", filters={"user_id": 12}, order_by="created_at", ascending=False)
+# Get top 5 highest-value orders overall
+select_rows("orders", order_by="amount", ascending=False, limit=5)
+# Fetch only specific columns instead of "*"
+select_rows("users", filters={"role": "engineer"}, select="id,name,email")
+# Combine multiple filters (AND logic) — active engineers only
+select_rows("users", filters={"role": "engineer", "is_active": True})
+# Get everything, no filters, capped at 50 rows
+select_rows("logs", limit=50)
     
