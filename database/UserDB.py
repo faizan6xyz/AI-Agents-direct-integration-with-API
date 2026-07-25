@@ -18,8 +18,6 @@ try:
 except Exception:
     res = supabase.auth.sign_up({"email": mail, "password": passw})
 
-from typing import Any, Optional
-
 def insert_rows(table_name: str, data: dict[str, Any] | list[dict[str, Any]]) -> list[dict]:
     response = supabase.table(table_name).insert(data).execute()
     return response.data
