@@ -45,7 +45,7 @@ BASE_URL = "https://api.razorpay.com/v1"
 AUTH = (KEY_ID, KEY_SECRET)
 TABLE_NAME = "Razorpay"
 TABLE_NAME_verify = "Razorpay_verify"
-_STATUS_RANK = {"created": 0, "paid": 1, "captured": 2, "failed": 2}
+_STATUS_RANK = {"created": 0, "paid": 1, "failed": 2, "captured": 3}
 
 class RazorpayError(Exception):
     pass
