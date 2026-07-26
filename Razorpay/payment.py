@@ -124,7 +124,7 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
 
 @app.route("/checkout")
 def checkout_page():
-    plan_id = request.args.get("plan_id", "basic_monthly")
+    plan_id = request.args.get("plan_id", "basic_monthly") # Basic_montly as default
     if plan_id not in Plan:
         return jsonify({"error": "invalid_plan_id"}), 400
     return render_template("checkout.html", plan_id=plan_id, key_id=KEY_ID)

@@ -291,7 +291,7 @@ def seed_cart():
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
     user_id = body.get("user_id")
-    plan_key = body.get("plan_id", "basic_monthly")
+    plan_key = body.get("plan_id", "basic_monthly") # default is basic monthly
     if not cart_id or not user_id:
         return jsonify({"error": "cart_id and user_id required"}), 400
     if plan_key not in PLAN_CATALOG:
