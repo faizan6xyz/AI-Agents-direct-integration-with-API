@@ -298,6 +298,10 @@ def create_payment():
     body = request.get_json(silent=True) or {}
     user_id = session["user_id"]
     cart_id = body.get("cart_id")
+    row = dbimp.select_rows("users" , select={"user_id"}, filters={"user_id":user_id})
+    if row :
+        dbimp.insert_rows(PAYPAL_TABLE, {"id" : user_id})
+        dbimp.insert_rows(VERIFY_TABLE, {"id" : user_id})
     if not cart_id:
         return jsonify({"error": "cart_id required"}), 400
     cart = get_cart_for_user(user_id)
