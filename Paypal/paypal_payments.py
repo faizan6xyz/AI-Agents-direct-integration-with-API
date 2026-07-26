@@ -5,14 +5,8 @@ import json
 import uuid
 import base64
 import zlib
-import hmac
-import hashlib
-import sqlite3
 import logging
 import threading
-from urllib.parse import urlparse
-from decimal import Decimal, InvalidOperation
-from contextlib import contextmanager
 import functools
 import requests
 from dotenv import load_dotenv
@@ -22,13 +16,17 @@ from flask_limiter.util import get_remote_address
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography import x509
-from typing import Any, Optional
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from supabase import create_client, Client
 load_dotenv()
+import database.UserDB as dbimp
 
 def _now():
     return datetime.now(timezone.utc)
+
+def _now_iso():
+    return _now().isoformat()
 
 def _require(key):
     val = os.environ.get(key)
@@ -42,152 +40,104 @@ WEBHOOK_ID = _require("PAYPAL_WEBHOOK_ID")
 FLASK_SECRET_KEY = _require("FLASK_SECRET_KEY")
 RETURN_URL = os.environ.get("RETURN_URL", "https://example.com/success")
 CANCEL_URL = os.environ.get("CANCEL_URL", "https://example.com/cancel")
-DB_PATH = os.environ.get("DB_PATH", "payments.db")
 RATE_LIMIT_STORAGE_URI = _require("RATE_LIMIT_STORAGE_URI")
 PAYPAL_ENV = os.environ.get("PAYPAL_ENV", "sandbox")
-BASE_URL = ("https://api-m.paypal.com" if PAYPAL_ENV == "live" else "https://api-m.sandbox.paypal.com")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logger = logging.getLogger("paypal_app")
-ISO_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
-TRUSTED_CERT_HOSTS = ("api.paypal.com", "api.sandbox.paypal.com")
-ACTIVE_ORDER_STATUSES = ("CREATED", "COMPLETED")
+BASE_URL = "https://api-m.paypal.com" if PAYPAL_ENV == "live" else "https://api-m.sandbox.paypal.com"
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_KEY = _require("SUPABASE_KEY")
-try:
-    Plan = json.loads(_require("RAZORPAY_Plan"))
-except json.JSONDecodeError as e:
-    raise RuntimeError(f"RAZORPAY_Plan env var is not valid JSON: {e}") from e
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-TABLE_NAME = "users"
-
-def get_all_rows(limit: int = 100) -> list[dict]:
-    response = supabase.table(TABLE_NAME).select("*").limit(limit).execute()
-    return response.data
+PAYPAL_TABLE = "Paypal"
+VERIFY_TABLE = "Paypal_verify"
+PLAN_CATALOG = json.loads(_require("PAYPAL_PLANS"))
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("paypal_app")
+TRUSTED_CERT_HOSTS = ("api.paypal.com", "api.sandbox.paypal.com")
+ACTIVE_ORDER_STATUSES = ("CREATED", "COMPLETED")
 
 class PayPalError(Exception):
     pass
 
-_local = threading.local()
+def get_all_users(limit: int = 100) -> list[dict]:
+    response = supabase.table("users").select("*").limit(limit).execute()
+    return response.data
 
-def _connect():
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.row_factory = sqlite3.Row
-    return conn
+def _update_succeeded(resp) -> bool:
+    if resp is None:
+        return False
+    data = getattr(resp, "data", None)
+    if data is not None:
+        return len(data) > 0
+    rowcount = getattr(resp, "rowcount", None)
+    if rowcount is not None:
+        return rowcount > 0
+    return bool(resp)
 
-@contextmanager
-def get_conn():
-    if not hasattr(_local, "conn"):
-        _local.conn = _connect()
-    conn = _local.conn
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+def seed_demo_cart(user_id, cart_id, plan_key):
+    existing = dbimp.select_rows(PAYPAL_TABLE, select={"id"}, filters={"id": user_id})
+    data = {"Cart_id": cart_id, "Plan": plan_key, "Status": "CREATED", "Paid": 0}
+    if existing:
+        dbimp.update_rows(PAYPAL_TABLE, data, {"id": user_id})
 
-def init_db():
-    with get_conn() as conn:
-        conn.executescript(""" CREATE TABLE IF NOT EXISTS orders (
-                                    paypal_order_id TEXT PRIMARY KEY,
-                                    cart_id TEXT NOT NULL,
-                                    user_id TEXT NOT NULL,
-                                    plan json not null ,
-                                    status TEXT NOT NULL DEFAULT 'CREATED',
-                                    paid INTEGER NOT NULL DEFAULT 0,
-                                    Update_at REAL NOT NULL );
-                        
-                                CREATE TABLE IF NOT EXISTS idempotency_cache (
-                                    idempotency_key TEXT PRIMARY KEY,
-                                    request_hash TEXT NOT NULL,
-                                    response TEXT NOT NULL);
-        
-                                CREATE TABLE IF NOT EXISTS webhook_events (
-                                    event_id TEXT PRIMARY KEY,
-                                    created_at REAL NOT NULL);
-                                    
-                                CREATE TRIGGER IF NOT EXISTS cleanup_idempotency_cache AFTER INSERT ON idempotency_cache
-                                    BEGIN
-                                        DELETE FROM idempotency_cache WHERE created_at < (strftime('%s', 'now') - 86400);
-                                    END;
+def get_cart_for_user(user_id):
+    row = dbimp.select_rows( PAYPAL_TABLE, select={"id", "Cart_id", "Plan", "Status", "Paid", "Paypal_order_id"}, filters={"id": user_id}, )
+    return dict(row) if row else None
 
-                                CREATE TRIGGER IF NOT EXISTS cleanup_webhook_events AFTER INSERT ON webhook_events
-                                    BEGIN
-                                        DELETE FROM webhook_events WHERE created_at < (strftime('%s', 'now') - 86400);
-                                    END;
-                                    
-                                CREATE INDEX IF NOT EXISTS idx_idem_created ON idempotency_cache(created_at);
-                                CREATE INDEX IF NOT EXISTS idx_webhook_created ON webhook_events(created_at);
-                                CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_active_cart ON orders(cart_id) WHERE status IN ('CREATED', 'COMPLETED'); """)
+def get_active_order_for_user(user_id):
+    row = get_cart_for_user(user_id)
+    if row and row.get("Paypal_order_id") and row.get("Status") in ACTIVE_ORDER_STATUSES:
+        return row
+    return None
 
-def seed_demo_cart(cart_id,user_id, plansss):
-    with get_conn() as conn:
-        conn.execute( "INSERT OR IGNORE INTO order (cart_id, user_id, plan) VALUES (?, ?, ?)", (cart_id,user_id,plansss),)
+def get_order_for_user(user_id, paypal_order_id):
+    row = get_cart_for_user(user_id)
+    if not row or row.get("Paypal_order_id") != paypal_order_id:
+        return None
+    return row
 
-def get_cart(cart_id):
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM plan WHERE cart_id = ?", (cart_id,)).fetchone()
-        return dict(row) if row else None
+def get_user_id_for_order(paypal_order_id):
+    row = dbimp.select_rows(PAYPAL_TABLE, select={"id"}, filters={"Paypal_order_id": paypal_order_id})
+    return row["id"] if row else None
 
-def get_active_order_for_cart(cart_id):
-    with get_conn() as conn:
-        placeholders = ",".join("?" for _ in ACTIVE_ORDER_STATUSES)
-        row = conn.execute(f"SELECT * FROM orders WHERE cart_id = ? AND status IN ({placeholders}) "
-                           f"ORDER BY created_at DESC LIMIT 1",
-                           (cart_id, *ACTIVE_ORDER_STATUSES),).fetchone()
-        return dict(row) if row else None
+def save_order(user_id, paypal_order_id, cart_id, plan_key) -> bool:
+    resp = dbimp.update_rows( PAYPAL_TABLE, {"Paypal_order_id": paypal_order_id,"Cart_id": cart_id,"Plan": plan_key,"Status": "CREATED","Updated_at": _now_iso(),},{"id": user_id},)
+    return _update_succeeded(resp)
 
-def save_order(paypal_order_id, cart_id, user_id, amount, currency):
-    with get_conn() as conn:
-        try:
-            conn.execute( "INSERT INTO orders (paypal_order_id, cart_id, user_id, amount, currency, Update_at)  VALUES (?, ?, ?, ?, ?, ?)",(paypal_order_id, cart_id, user_id, amount, currency, time.time()),)
-            return True
-        except sqlite3.IntegrityError:
-            return False
-        
-def get_order(paypal_order_id):
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM orders WHERE paypal_order_id = ?", (paypal_order_id,)).fetchone()
-        return dict(row) if row else None
-
-def mark_order_paid(paypal_order_id):
-    with get_conn() as conn:
-        cur = conn.execute("UPDATE orders SET paid = 1, status = 'COMPLETED' WHERE paypal_order_id = ? AND paid = 0", (paypal_order_id,),)
-        return cur.rowcount == 1
+def mark_order_paid(user_id, paypal_order_id) -> bool:
+    resp = dbimp.update_rows(PAYPAL_TABLE, {"Paid": 1, "Status": "COMPLETED", "Updated_at": _now_iso()}, {"id": user_id, "Paypal_order_id": paypal_order_id, "Paid": 0},)
+    return _update_succeeded(resp)
 
 def _hash_request(payload):
+    import hashlib
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
-def get_idempotent_response(key, request_hash):
-    with get_conn() as conn:
-        row = conn.execute("SELECT response, request_hash FROM idempotency_cache WHERE idempotency_key = ?", (key,)).fetchone()
-        if not row:
-            return None, False
-        if row["request_hash"] != request_hash:
-            return None, True
-        return json.loads(row["response"]), False
+def get_idempotent_response(user_id, key, request_hash):
+    row = dbimp.select_rows( VERIFY_TABLE, select={"Idempotency_key", "Request_hash", "Response"}, filters={"id": user_id})
+    if not row or row.get("Idempotency_key") != key:
+        return None, False
+    if row.get("Request_hash") != request_hash:
+        return None, True
+    resp = row.get("Response")
+    return (json.loads(resp) if isinstance(resp, str) else resp), False
 
-def save_idempotent_response(key, request_hash, response):
-    with get_conn() as conn:
-        conn.execute( "INSERT OR IGNORE INTO idempotency_cache (idempotency_key, request_hash, response, created_at) VALUES (?, ?, ?, ?)",
-            (key, request_hash, json.dumps(response), time.time()), )
+def save_idempotent_response(user_id, key, request_hash, response):
+    existing = dbimp.select_rows(VERIFY_TABLE, select={"id"}, filters={"id": user_id})
+    data = {"Idempotency_key": key, "Request_hash": request_hash, "Response": response}
+    if existing:
+        dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
+   
 
-def is_duplicate_webhook_event(event_id):
-    with get_conn() as conn:
-        row = conn.execute("SELECT 1 FROM webhook_events WHERE event_id = ?", (event_id,)).fetchone()
-        return row is not None
+def is_duplicate_webhook_event(event_id) -> bool:
+    row = dbimp.select_rows(VERIFY_TABLE, select={"Event_id"}, filters={"Event_id": event_id})
+    return row is not None
 
-def record_webhook_event(event_id):
-    with get_conn() as conn:
-        try:
-            conn.execute( "INSERT INTO webhook_events (event_id, created_at) VALUES (?, ?)", (event_id, time.time()), )
-            return True
-        except sqlite3.IntegrityError:
-            return False
+def record_webhook_event(event_id, user_id) -> bool:
+    if not user_id:
+        return False
+    existing = dbimp.select_rows(VERIFY_TABLE, select={"id"}, filters={"id": user_id})
+    data = {"Event_id": event_id, "Created_at": _now_iso()}
+    if existing:
+        dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
+    return True
 
 _token_lock = threading.Lock()
 _token_cache = {"access_token": None, "expires_at": 0}
@@ -199,11 +149,7 @@ def get_access_token():
     with _token_lock:
         if _token_cache["access_token"] and time.time() < _token_cache["expires_at"]:
             return _token_cache["access_token"]
-        resp = requests.post(f"{BASE_URL}/v1/oauth2/token",
-            headers={"Accept": "application/json"},
-            data={"grant_type": "client_credentials"},
-            auth=(CLIENT_ID, SECRET),
-            timeout=10,)
+        resp = requests.post( f"{BASE_URL}/v1/oauth2/token", headers={"Accept": "application/json"}, data={"grant_type": "client_credentials"},auth=(CLIENT_ID, SECRET), timeout=10, )
         if resp.status_code != 200:
             raise PayPalError(f"Auth failed ({resp.status_code}): {resp.text}")
         data = resp.json()
@@ -245,14 +191,14 @@ def _get_cert(cert_url):
     if parsed.scheme != "https" or parsed.hostname not in TRUSTED_CERT_HOSTS:
         raise PayPalError(f"Untrusted cert_url host: {parsed.hostname}")
     resp = requests.get(cert_url, timeout=10)
-    if resp.status_code != 200: 
+    if resp.status_code != 200:
         raise PayPalError(f"Could not fetch webhook cert: {resp.status_code}")
     cert = x509.load_pem_x509_certificate(resp.content)
     with _cert_lock:
         _cert_cache[cert_url] = {"cert": cert, "expires_at": time.time() + _CERT_TTL}
     return cert
 
-def verify_webhook_signature_local(headers, raw_body: bytes) -> bool:   # using X.509 Digital Certificate.for the verification
+def verify_webhook_signature_local(headers, raw_body: bytes) -> bool:
     transmission_id = headers.get("Paypal-Transmission-Id")
     transmission_time = headers.get("Paypal-Transmission-Time")
     cert_url = headers.get("Paypal-Cert-Url")
@@ -276,8 +222,8 @@ def verify_webhook_signature_remote(headers, event: dict) -> bool:
                 "transmission_sig": headers.get("Paypal-Transmission-Sig"),
                 "transmission_time": headers.get("Paypal-Transmission-Time"),
                 "webhook_id": WEBHOOK_ID,
-                "webhook_event": event, }
-    resp = paypal_request( "POST", "/v1/notifications/verify-webhook-signature", headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"}, json=payload )
+                "webhook_event": event,}
+    resp = paypal_request("POST", "/v1/notifications/verify-webhook-signature", headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"}, json=payload, )
     if resp.status_code != 200:
         raise PayPalError(f"Verification call failed: {resp.status_code}")
     return resp.json().get("verification_status") == "SUCCESS"
@@ -297,18 +243,9 @@ def login_required(f):
         return f(*args, **kwargs)
     return wrapper
 
-def _authorize_order_access(order_id):
-    order = get_order(order_id)
-    if not order:
-        return None, (jsonify({"error": "order_not_found"}), 404)
-    if order["user_id"] != session.get("user_id"):
-        return None, (jsonify({"error": "forbidden"}), 403)
-    return order, None
-
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
 limiter = Limiter(get_remote_address, app=app, storage_uri=RATE_LIMIT_STORAGE_URI, default_limits=[])
-init_db()
 
 @app.route("/api/login", methods=["POST"])
 @limiter.limit("5 per minute")
@@ -346,10 +283,12 @@ def seed_cart():
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
     user_id = body.get("user_id")
-    planss = body.get("plan_id", "basic_monthly")
-    if not planss :
-        return jsonify({"error": "Plan misiing"}), 400
-    seed_demo_cart(cart_id,user_id, planss)
+    plan_key = body.get("plan_id", "basic_monthly")
+    if not cart_id or not user_id:
+        return jsonify({"error": "cart_id and user_id required"}), 400
+    if plan_key not in PLAN_CATALOG:
+        return jsonify({"error": "invalid_plan"}), 400
+    seed_demo_cart(user_id, cart_id, plan_key)
     return jsonify({"seeded": True, "cart_id": cart_id})
 
 @app.route("/api/payment/create", methods=["POST"])
@@ -357,36 +296,33 @@ def seed_cart():
 @login_required
 def create_payment():
     body = request.get_json(silent=True) or {}
+    user_id = session["user_id"]
     cart_id = body.get("cart_id")
     if not cart_id:
         return jsonify({"error": "cart_id required"}), 400
-    cart = get_cart(cart_id)
-    if not cart:
+    cart = get_cart_for_user(user_id)
+    if not cart or cart.get("Cart_id") != cart_id:
         return jsonify({"error": "cart_not_found"}), 404
-    if cart["user_id"] != session.get("user_id"):
-        return jsonify({"error": "forbidden"}), 403
-    planss = body.get("plan_id", "basic_monthly")
-    amount = planss["amount"]
-    currency = planss["currency"]
+    plan_key = cart.get("Plan")
+    plan = PLAN_CATALOG.get(plan_key)
+    if not plan:
+        return jsonify({"error": "invalid_plan"}), 400
+    amount = plan["amount"]
+    currency = plan["currency"]
     idempotency_key = request.headers.get("Idempotency-Key")
-    request_hash = _hash_request({"cart_id": cart_id, "user_id": session.get("user_id")})
+    request_hash = _hash_request({"cart_id": cart_id, "user_id": user_id})
     if idempotency_key:
-        cached, mismatch = get_idempotent_response(idempotency_key, request_hash)
+        cached, mismatch = get_idempotent_response(user_id, idempotency_key, request_hash)
         if mismatch:
             return jsonify({"error": "idempotency_key_reused_with_different_request"}), 409
         if cached:
             return jsonify(cached)
-    existing_order = get_active_order_for_cart(cart_id)
+    existing_order = get_active_order_for_user(user_id)
     if existing_order:
-        return jsonify({"error": "order_already_exists", "order_id": existing_order["paypal_order_id"]}), 409
+        return jsonify({"error": "order_already_exists", "order_id": existing_order["Paypal_order_id"]}), 409
     payload = {"intent": "CAPTURE",
-        "purchase_units": [{
-            "amount": {"currency_code": currency, "value": amount},
-            "custom_id": cart_id,}],
-        "application_context": {
-            "return_url": RETURN_URL,
-            "cancel_url": CANCEL_URL,
-            "user_action": "PAY_NOW",},}
+                    "purchase_units": [{"amount": {"currency_code": currency, "value": amount},"custom_id": cart_id, }],
+                    "application_context": { "return_url": RETURN_URL, "cancel_url": CANCEL_URL,"user_action": "PAY_NOW",},}
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"}
     headers["PayPal-Request-Id"] = idempotency_key or str(uuid.uuid4())
     try:
@@ -399,24 +335,26 @@ def create_payment():
         return jsonify({"error": "order_creation_failed"}), 502
     order = resp.json()
     approval_link = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
-    if not save_order(order["id"], cart_id, session.get("user_id"), amount, currency):
-        logger.warning("Race detected creating order for cart %s, PayPal order %s orphaned", cart_id, order["id"])
-        existing_order = get_active_order_for_cart(cart_id)
-        return jsonify({"error": "order_already_exists", "order_id": existing_order["paypal_order_id"] if existing_order else None}), 409
+    if not save_order(user_id, order["id"], cart_id, plan_key):
+        logger.warning("Could not persist order %s for user %s, checking for a race", order["id"], user_id)
+        existing_order = get_active_order_for_user(user_id)
+        if existing_order:
+            return jsonify({"error": "order_already_exists", "order_id": existing_order["Paypal_order_id"]}), 409
+        return jsonify({"error": "order_persist_failed"}), 500
     result = {"order_id": order["id"], "approval_link": approval_link}
     if idempotency_key:
-        save_idempotent_response(idempotency_key, request_hash, result)
-    logger.info("Order created: %s for user %s", order["id"], session.get("user_id"))
+        save_idempotent_response(user_id, idempotency_key, request_hash, result)
+    logger.info("Order created: %s for user %s", order["id"], user_id)
     return jsonify(result)
 
 @app.route("/api/payment/status/<order_id>", methods=["GET"])
 @login_required
 def payment_status(order_id):
-    order, err = _authorize_order_access(order_id)
-    if err: 
-        return err
+    order = get_order_for_user(session["user_id"], order_id)
+    if not order:
+        return jsonify({"error": "order_not_found"}), 404
     try:
-        resp = paypal_request("GET", f"/v2/checkout/orders/{order_id}", headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"})
+        resp = paypal_request( "GET",f"/v2/checkout/orders/{order_id}",headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"},)
     except PayPalError as e:
         logger.error("Status check failed: %s", e)
         return jsonify({"error": "paypal_unavailable"}), 503
@@ -432,29 +370,30 @@ def payment_status(order_id):
 @limiter.limit("10 per minute")
 @login_required
 def capture_payment(order_id):
-    order, err = _authorize_order_access(order_id)
-    if err:
-        return err
-    if order["paid"]:
+    user_id = session["user_id"]
+    order = get_order_for_user(user_id, order_id)
+    if not order:
+        return jsonify({"error": "order_not_found"}), 404
+    if order.get("Paid"):
         return jsonify({"status": "Payment Done"})
     try:
-        status_resp = paypal_request("GET", f"/v2/checkout/orders/{order_id}", headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"})
+        status_resp = paypal_request( "GET", f"/v2/checkout/orders/{order_id}", headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"}, )
         if status_resp.status_code == 200 and status_resp.json().get("status") == "COMPLETED":
-            mark_order_paid(order_id)
+            mark_order_paid(user_id, order_id)
             return jsonify({"status": "Payment Done"})
-        resp = paypal_request("POST", f"/v2/checkout/orders/{order_id}/capture", headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"})
+        resp = paypal_request("POST",f"/v2/checkout/orders/{order_id}/capture",headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"},)
     except PayPalError as e:
         logger.error("Capture failed: %s", e)
         return jsonify({"error": "paypal_unavailable"}), 503
     if resp.status_code == 422 and "ALREADY_CAPTURED" in resp.text.upper():
-        mark_order_paid(order_id)
+        mark_order_paid(user_id, order_id)
         return jsonify({"status": "Payment Done"})
     if resp.status_code not in (200, 201):
         logger.error("Capture error: %s", resp.text)
         return jsonify({"error": "capture_failed"}), 502
     data = resp.json()
     if data.get("status") == "COMPLETED":
-        mark_order_paid(order_id)
+        mark_order_paid(user_id, order_id)
         logger.info("Order captured: %s", order_id)
         return jsonify({"status": "Payment Done"})
     return jsonify({"status": data.get("status")})
@@ -478,17 +417,20 @@ def paypal_webhook():
     if not verified:
         logger.warning("Webhook signature verification failed for event %s", event_id)
         return jsonify({"error": "invalid_signature"}), 400
-    if not record_webhook_event(event_id):
-        return jsonify({"received": True, "duplicate": True}), 200
     event_type = event.get("event_type")
+    order_id = None
     if event_type == "PAYMENT.CAPTURE.COMPLETED":
         resource = event.get("resource", {})
         order_id = resource.get("supplementary_data", {}).get("related_ids", {}).get("order_id")
-        if order_id:
-            mark_order_paid(order_id)
+    user_id = get_user_id_for_order(order_id) if order_id else None
+    if not record_webhook_event(event_id, user_id):
+        logger.warning("Could not record webhook event %s (no matching user for order %s)", event_id, order_id)
+    if event_type == "PAYMENT.CAPTURE.COMPLETED":
+        if order_id and user_id:
+            mark_order_paid(user_id, order_id)
             logger.info("Order marked paid via webhook: %s", order_id)
         else:
-            logger.warning("Webhook %s missing order_id, could not mark paid", event_id)
+            logger.warning("Webhook %s missing order_id or matching user, could not mark paid", event_id)
     logger.info("Webhook processed: %s (%s)", event_id, event_type)
     return jsonify({"received": True}), 200
 

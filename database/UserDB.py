@@ -3,7 +3,6 @@ from typing import Any, Optional
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
-
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -18,29 +17,59 @@ try:
 except Exception:
     res = supabase.auth.sign_up({"email": mail, "password": passw})
 
+def _apply_filters(query, filters: dict[str, Any]):
+    for column, condition in filters.items():
+        if isinstance(condition, tuple):
+            op, value = condition
+            op = op.lower()
+            if op == "eq":
+                query = query.eq(column, value)
+            elif op == "neq":
+                query = query.neq(column, value)
+            elif op == "gt":
+                query = query.gt(column, value)
+            elif op == "gte":
+                query = query.gte(column, value)
+            elif op == "lt":
+                query = query.lt(column, value)
+            elif op == "lte":
+                query = query.lte(column, value)
+            elif op == "like":
+                query = query.like(column, value)
+            elif op == "ilike":
+                query = query.ilike(column, value)
+            elif op == "in":
+                query = query.in_(column, value)   # value must be a list
+            elif op == "is":
+                query = query.is_(column, value)   # e.g. None for IS NULL
+            elif op == "contains":
+                query = query.contains(column, value)  # for array/jsonb columns
+            else:
+                raise ValueError(f"Unsupported operator: {op}")
+        else:
+            query = query.eq(column, condition)
+    return query
+
 def insert_rows(table_name: str, data: dict[str, Any] | list[dict[str, Any]]) -> list[dict]:
     response = supabase.table(table_name).insert(data).execute()
     return response.data
 
 def update_rows(table_name: str, updates: dict[str, Any], filters: dict[str, Any]) -> list[dict]:
     query = supabase.table(table_name).update(updates)
-    for column, value in filters.items():
-        query = query.eq(column, value)
+    query = _apply_filters(query, filters)
     response = query.execute()
     return response.data
 
 def delete_rows(table_name: str, filters: dict[str, Any]) -> list[dict]:
     query = supabase.table(table_name).delete()
-    for column, value in filters.items():
-        query = query.eq(column, value)
+    query = _apply_filters(query, filters)
     response = query.execute()
     return response.data
 
 def select_rows( table_name: str, filters: Optional[dict[str, Any]] = None, select: str = "*", order_by: Optional[str] = None, ascending: bool = True, limit: Optional[int] = None,) -> list[dict]:
     query = supabase.table(table_name).select(select)
     if filters:
-        for column, value in filters.items():
-            query = query.eq(column, value)
+        query = _apply_filters(query, filters)
     if order_by:
         query = query.order(order_by, desc=not ascending)
     if limit:
@@ -96,3 +125,45 @@ select_rows("users", filters={"role": "engineer", "is_active": True})
 # Get everything, no filters, capped at 50 rows
 select_rows("logs", limit=50)
     
+    
+    
+# --- gte / lte together (range queries) ---
+# Orders between ₹10,000 and ₹50,000 — call select twice with a combined filter dict won't AND a range on one column,
+# so chain manually or use Supabase's raw filter builder:
+supabase.table("orders").select("*").gte("amount", 10000).lte("amount", 50000).execute()
+# --- Date ranges ---
+# Orders placed in the last 7 days
+from datetime import datetime, timedelta, timezone
+week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+select_rows("orders", filters={"created_at": ("gte", week_ago)})
+# Orders before a specific cutoff date
+select_rows("orders", filters={"created_at": ("lt", "2026-01-01T00:00:00Z")})
+# --- like vs ilike ---
+# Emails ending in a specific domain (case-sensitive)
+select_rows("users", filters={"email": ("like", "%@company.com")})
+# Product names containing "phone" (case-insensitive)
+select_rows("orders", filters={"product": ("ilike", "%phone%")})
+# --- in / not-in ---
+# Users with specific roles
+select_rows("users", filters={"role": ("in", ["admin", "senior", "manager"])})
+# Orders excluding cancelled/refunded (combine neq calls manually if you need "not in")
+supabase.table("orders").select("*").not_.in_("status", ["cancelled", "refunded"]).execute()
+# --- is (NULL / boolean checks) ---
+# Users who haven't verified their email
+select_rows("users", filters={"email_verified_at": ("is", None)})
+# Active users only (boolean column)
+select_rows("users", filters={"is_active": ("is", True)})
+# --- contains (array/jsonb columns) ---
+# Products tagged as "vip" or "premium" (tags is a Postgres array column)
+select_rows("orders", filters={"tags": ("contains", ["vip"])})
+# --- Combining multiple operators in one call ---
+# Active engineers earning above a threshold, sorted by salary
+select_rows( "users", filters={"role": "engineer", "is_active": True, "salary": ("gt", 80000)}, order_by="salary", ascending=False)
+# Pending orders over ₹5,000 for a specific user
+select_rows("orders", filters={"user_id": 12, "status": "pending", "amount": ("gt", 5000)})
+# --- Update with conditional filters ---
+# Flag all high-value pending orders for review
+update_rows( "orders", {"flagged_for_review": True}, {"status": "pending", "amount": ("gt", 100000)})
+# --- Delete with conditional filters ---
+# Clean up inactive users who never logged in
+delete_rows("users", {"is_active": False, "last_login": ("is", None)})
