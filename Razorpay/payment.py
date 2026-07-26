@@ -65,18 +65,7 @@ def login():
         return jsonify({"error": "invalid_credentials"}), 401
     if not res or not res.session or not res.user:
         return jsonify({"error": "invalid_credentials"}), 401
-    return jsonify({ "access_token": res.session.access_token , "refresh_token": res.session.refresh_token,"user_id": res.user.id, })
-
-@app.route("/api/logout", methods=["POST"])
-def logout():
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header.split(" ", 1)[1]
-        try:
-            supabase.auth.admin.sign_out(token)
-        except Exception:
-            pass
-    return jsonify({"ok": True})
+    return jsonify({ "access_token": res.session.access_token , "refresh_token": res.session.refresh_token,"id": res.user.id, })
 
 def require_user(f):
     @functools.wraps(f)
@@ -98,7 +87,7 @@ def require_user(f):
 def _authorize_order_access(order_id, user_id):
     if not order_id:
         return False
-    row = dbimp.select_rows(TABLE_NAME, select={"User_id"}, filters={"Order_id": order_id})
+    row = dbimp.select_rows(TABLE_NAME, select={"id"}, filters={"Order_id": order_id})
     return bool(row) and row[0] == user_id
 
 def _release_idempotency_claim(store_key):
@@ -181,7 +170,7 @@ def create_payment():
     result = {"order_id": order["id"], "amount": order["amount"], "currency": order["currency"], "key_id": KEY_ID}
     row = dbimp.select_rows(TABLE_NAME, select={"Order_id"}, filters={"Order_id": order["id"]})
     if not row:
-        dbimp.insert_rows(TABLE_NAME, { "Order_id": order["id"], "User_id": request.user.id, "Plan_id": plan_id, "Status": "created", "Updates_at": _now(), })
+        dbimp.insert_rows(TABLE_NAME, { "Order_id": order["id"], "Plan_id": plan_id, "Status": "created", "Updates_at": _now(), })
     if store_key:
         dbimp.update_rows(TABLE_NAME_verify, {"Response_json": json.dumps(result), "Created_at": _now()}, {"Key": store_key})
     return jsonify(result)
