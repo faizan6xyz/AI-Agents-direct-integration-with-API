@@ -27,6 +27,9 @@ from datetime import datetime, timezone
 from supabase import create_client, Client
 load_dotenv()
 
+def _now():
+    return datetime.now(timezone.utc)
+
 def _require(key):
     val = os.environ.get(key)
     if not val:
@@ -50,6 +53,10 @@ TRUSTED_CERT_HOSTS = ("api.paypal.com", "api.sandbox.paypal.com")
 ACTIVE_ORDER_STATUSES = ("CREATED", "COMPLETED")
 SUPABASE_URL = _require("SUPABASE_URL")
 SUPABASE_KEY = _require("SUPABASE_KEY")
+try:
+    Plan = json.loads(_require("RAZORPAY_Plan"))
+except json.JSONDecodeError as e:
+    raise RuntimeError(f"RAZORPAY_Plan env var is not valid JSON: {e}") from e
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -85,28 +92,20 @@ def get_conn():
 
 def init_db():
     with get_conn() as conn:
-        conn.executescript(""" CREATE TABLE IF NOT EXISTS carts ( 
-                                    cart_id TEXT PRIMARY KEY,
-                                    user_id TEXT NOT NULL,
-                                    amount TEXT NOT NULL,
-                                    currency TEXT NOT NULL );
-                        
-                                CREATE TABLE IF NOT EXISTS orders (
+        conn.executescript(""" CREATE TABLE IF NOT EXISTS orders (
                                     paypal_order_id TEXT PRIMARY KEY,
                                     cart_id TEXT NOT NULL,
                                     user_id TEXT NOT NULL,
-                                    amount TEXT NOT NULL,
-                                    currency TEXT NOT NULL,
+                                    plan json not null ,
                                     status TEXT NOT NULL DEFAULT 'CREATED',
                                     paid INTEGER NOT NULL DEFAULT 0,
-                                    created_at REAL NOT NULL );
+                                    Update_at REAL NOT NULL );
                         
                                 CREATE TABLE IF NOT EXISTS idempotency_cache (
                                     idempotency_key TEXT PRIMARY KEY,
                                     request_hash TEXT NOT NULL,
-                                    response TEXT NOT NULL,
-                                    created_at REAL NOT NULL);
-                                    
+                                    response TEXT NOT NULL);
+        
                                 CREATE TABLE IF NOT EXISTS webhook_events (
                                     event_id TEXT PRIMARY KEY,
                                     created_at REAL NOT NULL);
@@ -125,13 +124,13 @@ def init_db():
                                 CREATE INDEX IF NOT EXISTS idx_webhook_created ON webhook_events(created_at);
                                 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_active_cart ON orders(cart_id) WHERE status IN ('CREATED', 'COMPLETED'); """)
 
-def seed_demo_cart(cart_id, user_id, amount, currency):
+def seed_demo_cart(cart_id,user_id, plansss):
     with get_conn() as conn:
-        conn.execute( "INSERT OR IGNORE INTO carts (cart_id, user_id, amount, currency) VALUES (?, ?, ?, ?)", (cart_id, user_id, amount, currency),)
+        conn.execute( "INSERT OR IGNORE INTO order (cart_id, user_id, plan) VALUES (?, ?, ?)", (cart_id,user_id,plansss),)
 
 def get_cart(cart_id):
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM carts WHERE cart_id = ?", (cart_id,)).fetchone()
+        row = conn.execute("SELECT * FROM plan WHERE cart_id = ?", (cart_id,)).fetchone()
         return dict(row) if row else None
 
 def get_active_order_for_cart(cart_id):
@@ -145,7 +144,7 @@ def get_active_order_for_cart(cart_id):
 def save_order(paypal_order_id, cart_id, user_id, amount, currency):
     with get_conn() as conn:
         try:
-            conn.execute( "INSERT INTO orders (paypal_order_id, cart_id, user_id, amount, currency, created_at)  VALUES (?, ?, ?, ?, ?, ?)",(paypal_order_id, cart_id, user_id, amount, currency, time.time()),)
+            conn.execute( "INSERT INTO orders (paypal_order_id, cart_id, user_id, amount, currency, Update_at)  VALUES (?, ?, ?, ?, ?, ?)",(paypal_order_id, cart_id, user_id, amount, currency, time.time()),)
             return True
         except sqlite3.IntegrityError:
             return False
@@ -347,17 +346,10 @@ def seed_cart():
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
     user_id = body.get("user_id")
-    amount = body.get("amount")
-    currency = body.get("currency")
-    if not all([cart_id, user_id, amount, currency]):
-        return jsonify({"error": "cart_id, user_id, amount, currency required"}), 400
-    try:
-        Decimal(amount)
-    except InvalidOperation:
-        return jsonify({"error": "invalid_amount"}), 400
-    if not ISO_CURRENCY_RE.match(currency):
-        return jsonify({"error": "invalid_currency"}), 400
-    seed_demo_cart(cart_id, user_id, amount, currency)
+    planss = body.get("plan_id", "basic_monthly")
+    if not planss :
+        return jsonify({"error": "Plan misiing"}), 400
+    seed_demo_cart(cart_id,user_id, planss)
     return jsonify({"seeded": True, "cart_id": cart_id})
 
 @app.route("/api/payment/create", methods=["POST"])
@@ -373,13 +365,9 @@ def create_payment():
         return jsonify({"error": "cart_not_found"}), 404
     if cart["user_id"] != session.get("user_id"):
         return jsonify({"error": "forbidden"}), 403
-    amount, currency = cart["amount"], cart["currency"]
-    try:
-        Decimal(amount)
-    except InvalidOperation:
-        return jsonify({"error": "invalid_amount"}), 400
-    if not ISO_CURRENCY_RE.match(currency):
-        return jsonify({"error": "invalid_currency"}), 400
+    planss = body.get("plan_id", "basic_monthly")
+    amount = planss["amount"]
+    currency = planss["currency"]
     idempotency_key = request.headers.get("Idempotency-Key")
     request_hash = _hash_request({"cart_id": cart_id, "user_id": session.get("user_id")})
     if idempotency_key:
