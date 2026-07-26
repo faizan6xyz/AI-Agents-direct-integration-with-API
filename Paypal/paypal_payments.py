@@ -77,6 +77,9 @@ def seed_demo_cart(user_id, cart_id, plan_key):
     data = {"Cart_id": cart_id, "Plan": plan_key, "Status": "CREATED", "Paid": 0}
     if existing:
         dbimp.update_rows(PAYPAL_TABLE, data, {"id": user_id})
+    else:
+        data["id"] = user_id
+        dbimp.insert_rows(PAYPAL_TABLE, data)
 
 def get_cart_for_user(user_id):
     row = dbimp.select_rows( PAYPAL_TABLE, select={"id", "Cart_id", "Plan", "Status", "Paid", "Paypal_order_id"}, filters={"id": user_id}, )
@@ -124,7 +127,9 @@ def save_idempotent_response(user_id, key, request_hash, response):
     data = {"Idempotency_key": key, "Request_hash": request_hash, "Response": response}
     if existing:
         dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
-   
+    else:
+        data["id"] = user_id
+        dbimp.insert_rows(VERIFY_TABLE, data)
 
 def is_duplicate_webhook_event(event_id) -> bool:
     row = dbimp.select_rows(VERIFY_TABLE, select={"Event_id"}, filters={"Event_id": event_id})
@@ -137,6 +142,9 @@ def record_webhook_event(event_id, user_id) -> bool:
     data = {"Event_id": event_id, "Created_at": _now_iso()}
     if existing:
         dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
+    else:
+        data["id"] = user_id
+        dbimp.insert_rows(VERIFY_TABLE, data)
     return True
 
 _token_lock = threading.Lock()
@@ -298,10 +306,6 @@ def create_payment():
     body = request.get_json(silent=True) or {}
     user_id = session["user_id"]
     cart_id = body.get("cart_id")
-    row = dbimp.select_rows("users" , select={"user_id"}, filters={"user_id":user_id})
-    if row :
-        dbimp.insert_rows(PAYPAL_TABLE, {"id" : user_id})
-        dbimp.insert_rows(VERIFY_TABLE, {"id" : user_id})
     if not cart_id:
         return jsonify({"error": "cart_id required"}), 400
     cart = get_cart_for_user(user_id)
