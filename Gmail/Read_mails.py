@@ -1,4 +1,9 @@
-import os , re , time , base64 , pickle , logging , mimetypes
+
+
+import database.UserDB as dbimp
+import pickle
+from datetime import datetime
+import os , re , time , base64 , pickle , logging , mimetypes , json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -7,15 +12,35 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from typing import Any, Optional
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+from supabase import create_client, Client
+load_dotenv()
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+mail = os.environ.get("email")
+passw = os.environ.get("pass")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_NAME = "users"
+try:
+    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
+except Exception:
+    res = supabase.auth.sign_up({"email": mail, "password": passw})
 logging.basicConfig(level=logging.INFO)
+Clientid = os.environ.get("client_id")
+Clientsec = os.environ.get("client_secrect")
 logger = logging.getLogger("gmail_client")
 GMAIL_SCOPES = os.environ.get("GMAIL_SCOPES")
 if not GMAIL_SCOPES or not GMAIL_SCOPES.strip():
     raise EnvironmentError("GMAIL_SCOPES environment variable is not set or empty.")
-SCOPES = [scope.strip() for scope in GMAIL_SCOPES.split(",") if scope.strip()]
+cleaned = [scope.strip() for scope in GMAIL_SCOPES.split(",") if scope.strip()]
+SCOPES = [s.strip(' []"') for s in cleaned]
 if not SCOPES:
     raise EnvironmentError("GMAIL_SCOPES did not contain any valid scopes.")
-TOKEN_PATH = 'Gmail/token.pickle'
+TOKEN_PATH = 'token.pickle'
 CLIENT_SECRET_PATH = 'Gmail/ss.json'
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 MAX_TOTAL_SEND_BYTES = 25 * 1024 * 1024
@@ -32,30 +57,35 @@ BLOCKED_ATTACHMENT_EXTENSIONS = {
 
 def get_service():
     if not os.path.exists(CLIENT_SECRET_PATH):
-        raise FileNotFoundError(f"Client secret file not found at '{CLIENT_SECRET_PATH}'. "
-            "Download it from Google Cloud Console and place it there.")
+        raise FileNotFoundError(f"Client secret file not found at '{CLIENT_SECRET_PATH}'. " "Download it from Google Cloud Console and place it there.")
     if os.path.getsize(CLIENT_SECRET_PATH) == 0:
         raise ValueError(f"Client secret file at '{CLIENT_SECRET_PATH}' is empty.")
+    user_id = res.user.id  # uuid from the supabase auth session, matches Gmail.id's uuid type
+    with open(CLIENT_SECRET_PATH, 'r') as f:
+        client_secrets = json.load(f)
+    rows = dbimp.select_rows("Gmail",select="Access_token,Refresh_token,Token_expire",filters={"id": user_id},)
+    row = rows[0] if rows else None
     creds = None
-    if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, 'rb') as f:
-            creds = pickle.load(f)
+    if row:
+        creds = Credentials( token=row["Access_token"], refresh_token=row["Refresh_token"], token_uri="https://oauth2.googleapis.com/token", client_id=client_secrets["installed"]["client_id"], client_secret=client_secrets["installed"]["client_secret"], scopes=SCOPES,)
+        if row.get("Token_expire"):
+            creds.expiry = datetime.fromisoformat(row["Token_expire"])
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            dbimp.update_rows("Gmail",{ "Access_token": creds.token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat(),},   filters={"id": user_id},)
         else:
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
-        os.makedirs(os.path.dirname(TOKEN_PATH) or ".", exist_ok=True)
-        with open(TOKEN_PATH, 'wb') as f:
-            pickle.dump(creds, f)
-        try:
-            os.chmod(TOKEN_PATH, 0o600)
-        except OSError:
-            logger.warning(f"Could not set restrictive permissions on {TOKEN_PATH}")
+            payload = {"Access_token": creds.token, "Refresh_token": creds.refresh_token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat(),}
+            if row:
+                dbimp.update_rows("Gmail", payload, filters={"id": user_id})
+            else:
+                dbimp.insert_rows("Gmail", {"id": user_id, **payload})
     if set(SCOPES) - set(getattr(creds, 'scopes', None) or SCOPES):
         logger.warning("Stored credentials may not cover all requested scopes.")
     return build('gmail', 'v1', credentials=creds)
+
 
 def _validate_email_address(address: str, label: str = "recipient") -> None:
     if not address or not isinstance(address, str):
