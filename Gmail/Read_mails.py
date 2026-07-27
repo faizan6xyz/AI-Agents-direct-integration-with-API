@@ -192,7 +192,10 @@ def list_messages(service, query='is:unread', max_results=10, all_pages=False, v
             break
     return parsed
 
-def send_message(service, to, subject, body_text):
+def send_message(service, to, subject, body_text, name=""):
+    if name:
+        subject = subject.replace("{name}", name)
+        body_text = body_text.replace("{name}", name)
     _validate_email_address(to)
     _validate_header_value(subject, "subject")
     _validate_header_value(body_text, "body_text")
@@ -202,7 +205,10 @@ def send_message(service, to, subject, body_text):
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     return _with_retry(service.users().messages().send, userId='me', body={'raw': raw})
 
-def send_message_with_attachments(service, to, subject, body_text, file_paths, allowed_dir=None):
+def send_message_with_attachments(service, to, subject, body_text, file_paths,name ="" ,allowed_dir=None):
+    if name:
+            subject = subject.replace("{name}", name)
+            body_text = body_text.replace("{name}", name)
     _validate_email_address(to)
     _validate_header_value(subject, "subject")
     _validate_header_value(body_text, "body_text")
