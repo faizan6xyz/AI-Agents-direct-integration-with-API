@@ -19,7 +19,7 @@ logger = logging.getLogger("payment")
 app = Flask(__name__)
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).isoformat()
 
 def _require(key):
     val = os.environ.get(key)

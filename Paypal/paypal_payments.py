@@ -23,7 +23,7 @@ load_dotenv()
 import database.UserDB as dbimp
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).isoformat()
 
 def _now_iso():
     return _now().isoformat()
