@@ -2,9 +2,12 @@ import logging
 from flask import Flask, request, jsonify, send_file
 from googleapiclient.errors import HttpError
 import Gmail.Read_mails as gc
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 app = Flask(__name__)
 logger = logging.getLogger("gmail_api")
 _service = None
+limiter = Limiter( app=app, key_func=get_remote_address,default_limits=["100 per hour"])
 
 def get_service():
     global _service
@@ -26,6 +29,7 @@ def handle_http_error(e):
     return jsonify({"error": str(e)}), status
 
 @app.route("/messages", methods=["GET"])
+@limiter.limit("20 per minute")
 def api_list_messages():
     query = request.args.get("query", "is:unread")
     max_results = int(request.args.get("max_results", 10))
@@ -34,6 +38,7 @@ def api_list_messages():
     return jsonify({"count": len(messages), "messages": messages})
 
 @app.route("/messages/send", methods=["POST"])
+@limiter.limit("10 per minute")
 def api_send_message():
     data = request.get_json(force=True, silent=True) or {}
     to = data.get("to")
@@ -49,6 +54,7 @@ def api_send_message():
     return jsonify({"id": result.get("id"), "status": "sent"}), 201
 
 @app.route("/messages/sendmultiple", methods=["POST"])
+@limiter.limit("5 per minute")
 def api_send_message_multiple():
     data = request.get_json(force=True, silent=True) or {}
     to = data.get("to")
@@ -72,6 +78,7 @@ def api_send_message_multiple():
     return jsonify({"results": results, "sent": sent_count, "total": len(to)}), status_code
 
 @app.route("/messages/send-with-attachments", methods=["POST"])
+@limiter.limit("5 per minute")
 def api_send_message_with_attachments():
     data = request.get_json(force=True, silent=True) or {}
     to = data.get("to")
@@ -91,21 +98,25 @@ def api_send_message_with_attachments():
     return jsonify({"id": result.get("id"), "status": "sent"}), 201
 
 @app.route("/messages/<message_id>/read", methods=["POST"])
+@limiter.limit("10 per minute")
 def api_mark_as_read(message_id):
     gc.mark_as_read(get_service(), message_id)
     return jsonify({"id": message_id, "status": "read"})
 
 @app.route("/messages/<message_id>/unread", methods=["POST"])
+@limiter.limit("10 per minute")
 def api_mark_as_unread(message_id):
     gc.mark_as_unread(get_service(), message_id)
     return jsonify({"id": message_id, "status": "unread"})
 
 @app.route("/messages/<message_id>/archive", methods=["POST"])
+@limiter.limit("10 per minute")
 def api_archive_message(message_id):
     gc.archive_message(get_service(), message_id)
     return jsonify({"id": message_id, "status": "archived"})
 
 @app.route("/messages/<message_id>/trash", methods=["POST"])
+@limiter.limit("10 per minute")
 def api_trash_message(message_id):
     data = request.get_json(force=True, silent=True) or {}
     confirm = bool(data.get("confirm", False))
@@ -113,6 +124,7 @@ def api_trash_message(message_id):
     return jsonify({"id": message_id, "status": "trashed"})
 
 @app.route("/messages/<message_id>/attachments", methods=["GET"])
+@limiter.limit("10 per minute")
 def api_download_attachments(message_id):
     out_dir = request.args.get("out_dir", "attachments")
     allow_executable_types = request.args.get("allow_executable_types", "false").lower() == "true"
@@ -120,6 +132,7 @@ def api_download_attachments(message_id):
     return jsonify({"id": message_id, "saved_files": saved, "count": len(saved)})
 
 @app.route("/messages/attachments/download-multiple", methods=["POST"])
+@limiter.limit("5 per minute")
 def api_download_attachments_multiple():
     data = request.get_json(force=True, silent=True) or {}
     message_ids = data.get("message_ids")
