@@ -82,7 +82,7 @@ def seed_demo_cart(user_id, cart_id, plan_key):
         dbimp.insert_rows(PAYPAL_TABLE, data)
 
 def get_cart_for_user(user_id):
-    row = dbimp.select_rows( PAYPAL_TABLE, select={"id", "Cart_id", "Plan", "Status", "Paid", "Paypal_order_id"}, filters={"id": user_id}, )
+    row = dbimp.select_rows( PAYPAL_TABLE, select="id,Cart_id,Plan,Status,Paid,Paypal_order_id", filters={"id": user_id}, )
     return dict(row) if row else None
 
 def get_active_order_for_user(user_id):
@@ -114,7 +114,7 @@ def _hash_request(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 def get_idempotent_response(user_id, key, request_hash):
-    row = dbimp.select_rows( VERIFY_TABLE, select={"Idempotency_key", "Request_hash", "Response"}, filters={"id": user_id})
+    row = dbimp.select_rows( VERIFY_TABLE, select="Idempotency_key,Request_hash,Response", filters={"id": user_id})
     if not row or row.get("Idempotency_key") != key:
         return None, False
     if row.get("Request_hash") != request_hash:

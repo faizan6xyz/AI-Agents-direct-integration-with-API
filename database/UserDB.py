@@ -83,7 +83,7 @@ if __name__ == "__main__":
     for row in all_rows:
         print(row)
 
-
+"""F
 # --- INSERT ---
 # Add a single user
 insert_rows("users", {"name": "Ayesha", "email": "ayesha@example.com", "role": "admin"})
@@ -166,4 +166,4 @@ select_rows("orders", filters={"user_id": 12, "status": "pending", "amount": ("g
 update_rows( "orders", {"flagged_for_review": True}, {"status": "pending", "amount": ("gt", 100000)})
 # --- Delete with conditional filters ---
 # Clean up inactive users who never logged in
-delete_rows("users", {"is_active": False, "last_login": ("is", None)})
+delete_rows("users", {"is_active": False, "last_login": ("is", None)})"""
