@@ -7,7 +7,7 @@ from flask_limiter.util import get_remote_address
 app = Flask(__name__)
 logger = logging.getLogger("gmail_api")
 _service = None
-limiter = Limiter( app=app, key_func=get_remote_address,default_limits=["100 per hour"])
+limiter = Limiter( app=app, key_func=get_remote_address,default_limits=["200 per hour"])
 
 def get_service():
     global _service
@@ -143,7 +143,7 @@ def api_download_attachments_multiple():
     results = []
     for message_id in message_ids:
         try:
-            saved = gc.download_attachments(get_service(), message_id, out_dir=out_dir, allow_executable_types=allow_executable_types,             )
+            saved = gc.download_attachments(get_service(), message_id, out_dir=out_dir, allow_executable_types=allow_executable_types,)
             results.append({"id": message_id, "status": "downloaded", "saved_files": saved, "count": len(saved), })
         except (ValueError, FileNotFoundError, HttpError) as e:
             results.append({"id": message_id, "status": "failed", "error": str(e)})

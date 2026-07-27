@@ -3,6 +3,12 @@ import time
 import requests
 import pandas as pd
 from datetime import datetime
+from flask import Flask, jsonify
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+app = Flask(__name__)
+limiter = Limiter( app=app, key_func=get_remote_address,default_limits=["100 per hour"])
+
 ACCESS_TOKEN = "YOUR_INSTAGRAM_ACCESS_TOKEN" # will add this into env later
 IG_USER_ID = "YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID"  
 CHECK_INTERVAL_SECONDS = 3600 
@@ -28,7 +34,6 @@ def get_views(media_id, media_type_label):
         print(f"View/insights request failed for {media_id}: {e}")
     return None
 
-
 def get_all_reels():
     url = f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media"
     params = {
@@ -42,7 +47,6 @@ def get_all_reels():
         if item.get("media_product_type") == "REELS"
     ]
     return reels
-
 
 def get_all_posts():
     url = f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media"
