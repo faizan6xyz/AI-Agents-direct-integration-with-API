@@ -324,6 +324,23 @@ def download_attachments(service, message_id: str, out_dir: str = "attachments",
         logger.info(f"Skipped {len(skipped)} attachment(s): {skipped}")
     return saved
 
+def create_filter(service, criteria, action):
+    body = {'criteria': criteria, 'action': action}
+    return service.users().settings().filters().create(userId='me', body=body).execute()
+
+def list_filters(service):
+    return service.users().settings().filters().list(userId='me').execute().get('filter', [])
+
+def delete_filter(service, filter_id):
+    return service.users().settings().filters().delete(userId='me', id=filter_id).execute()
+
+def list_labels(service):
+    return service.users().labels().list(userId='me').execute().get('labels', [])
+
+def create_label(service, name, list_visibility='labelShow', label_visibility='labelShow'):
+    body = {'name': name,'labelListVisibility': list_visibility,'messageListVisibility': label_visibility,}
+    return service.users().labels().create(userId='me', body=body).execute()
+
 if __name__ == "__main__":
     service = get_service()
     list_messages(service, query='is:unread', max_results=10)
