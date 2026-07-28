@@ -109,20 +109,6 @@ def api_mark_as_unread(message_id):
     gc.mark_as_unread(get_service(), message_id)
     return jsonify({"id": message_id, "status": "unread"})
 
-@app.route("/messages/<message_id>/archive", methods=["POST"])
-@limiter.limit("10 per minute")
-def api_archive_message(message_id):
-    gc.archive_message(get_service(), message_id)
-    return jsonify({"id": message_id, "status": "archived"})
-
-@app.route("/messages/<message_id>/trash", methods=["POST"])
-@limiter.limit("10 per minute")
-def api_trash_message(message_id):
-    data = request.get_json(force=True, silent=True) or {}
-    confirm = bool(data.get("confirm", False))
-    gc.trash_message(get_service(), message_id, confirm=confirm)
-    return jsonify({"id": message_id, "status": "trashed"})
-
 @app.route("/messages/<message_id>/attachments", methods=["GET"])
 @limiter.limit("10 per minute")
 def api_download_attachments(message_id):

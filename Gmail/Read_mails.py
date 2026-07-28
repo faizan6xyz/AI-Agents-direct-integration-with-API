@@ -276,18 +276,6 @@ def mark_as_unread(service, message_id: str) -> dict:
         raise ValueError("message_id must be a non-empty string.")
     return _with_retry(service.users().messages().modify, userId='me', id=message_id,body={'addLabelIds': ['UNREAD']})
 
-def archive_message(service, message_id: str) -> dict:
-    if not message_id or not isinstance(message_id, str):
-        raise ValueError("message_id must be a non-empty string.")
-    return _with_retry(service.users().messages().modify, userId='me', id=message_id,body={'removeLabelIds': ['INBOX']})
-
-def trash_message(service, message_id: str, confirm: bool = False) -> dict:
-    if not message_id or not isinstance(message_id, str):
-        raise ValueError("message_id must be a non-empty string.")
-    if not confirm:
-        raise ValueError("trash_message requires confirm=True to proceed.")
-    return _with_retry(service.users().messages().trash, userId='me', id=message_id)
-
 def download_attachments(service, message_id: str, out_dir: str = "attachments",allow_executable_types: bool = False) -> list[str]:
     if not message_id or not isinstance(message_id, str):
         raise ValueError("message_id must be a non-empty string.")
