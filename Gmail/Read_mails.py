@@ -1,5 +1,3 @@
-
-
 import database.UserDB as dbimp
 import pickle
 from datetime import datetime
@@ -344,3 +342,8 @@ def create_label(service, name, list_visibility='labelShow', label_visibility='l
 if __name__ == "__main__":
     service = get_service()
     list_messages(service, query='is:unread', max_results=10)
+    
+    
+    
+# using the filter for the adding the incoming mail into the label 
+# seeing the messages every 24 hours for every incoming mails instead of the webhook
