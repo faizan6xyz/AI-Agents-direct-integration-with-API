@@ -1,0 +1,1 @@
+i need to run file in ("py -m Instagram.Login") way because im not importing the files from the main directiry origin
