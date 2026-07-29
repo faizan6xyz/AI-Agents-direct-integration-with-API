@@ -2,10 +2,24 @@ import os
 import requests
 from urllib.parse import urlencode
 from flask import Flask, request, redirect, jsonify
+from supabase import create_client, Client
+import database.UserDB as dbimp
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 app = Flask(__name__)
 IG_APP_ID = os.getenv("IG_APP_ID")
 IG_APP_SECRET = os.getenv("IG_APP_SECRET")
 IG_REDIRECT_URI = os.getenv("IG_REDIRECT_URI")
+mail = os.environ.get("email")
+passw = os.environ.get("pass")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_NAME = "Instagram"
+try:
+    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
+except Exception:
+    res = supabase.auth.sign_up({"email": mail, "password": passw})
+if res : 
+    user_id = res.user.id
 SCOPE = "instagram_business_basic,instagram_business_content_publish"
 @app.route("/auth/instagram/login")
 def instagram_login():
@@ -42,6 +56,7 @@ def instagram_callback():
             "access_token": short_token,
         },).json()
     long_token = long_resp.get("access_token")
+    dbimp()
     return jsonify({"user_id": user_id, "access_token": long_token})
 
 @app.route("/instagram/posts")

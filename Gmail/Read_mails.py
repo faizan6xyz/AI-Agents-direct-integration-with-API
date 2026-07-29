@@ -38,7 +38,6 @@ cleaned = [scope.strip() for scope in GMAIL_SCOPES.split(",") if scope.strip()]
 SCOPES = [s.strip(' []"') for s in cleaned]
 if not SCOPES:
     raise EnvironmentError("GMAIL_SCOPES did not contain any valid scopes.")
-TOKEN_PATH = 'token.pickle'
 CLIENT_SECRET_PATH = 'Gmail/ss.json'
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 MAX_TOTAL_SEND_BYTES = 25 * 1024 * 1024
