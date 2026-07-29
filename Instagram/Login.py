@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 from flask import Flask, request, redirect, jsonify
 from supabase import create_client, Client
 import database.UserDB as dbimp
+from datetime import datetime , timezone , timedelta
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 app = Flask(__name__)
@@ -19,16 +20,14 @@ try:
 except Exception:
     res = supabase.auth.sign_up({"email": mail, "password": passw})
 if res : 
-    user_id = res.user.id
+    user_id = res.user.id    
+exist = dbimp.select_rows(TABLE_NAME , select="id" , filters={"id":user_id})
+if not exist :
+    dbimp.insert_rows(TABLE_NAME , {"id":user_id})
 SCOPE = "instagram_business_basic,instagram_business_content_publish"
 @app.route("/auth/instagram/login")
 def instagram_login():
-    params = {
-        "client_id": IG_APP_ID,
-        "redirect_uri": IG_REDIRECT_URI,
-        "scope": SCOPE,
-        "response_type": "code",
-    }
+    params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code", }
     auth_url = "https://www.instagram.com/oauth/authorize?" + urlencode(params)
     return redirect(auth_url)
 
@@ -56,7 +55,10 @@ def instagram_callback():
             "access_token": short_token,
         },).json()
     long_token = long_resp.get("access_token")
-    dbimp()
+    seconds = long_resp.get("expires_in")
+    duration = timedelta(seconds=seconds)
+    expire_time = datetime.now() + duration
+    dbimp.update_rows(TABLE_NAME, {"Access_token":long_token , "Timestamp": datetime.now(timezone.utc).isoformat(), "Token_expire" : expire_time })
     return jsonify({"user_id": user_id, "access_token": long_token})
 
 @app.route("/instagram/posts")
@@ -76,7 +78,6 @@ def get_instagram_posts():
         url = resp.get("paging", {}).get("next")
         params = None  # 'next' url already contains all query params
     return jsonify({"count": len(posts), "posts": posts})
-
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
