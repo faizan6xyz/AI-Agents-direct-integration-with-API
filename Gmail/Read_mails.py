@@ -48,33 +48,32 @@ HEADER_INJECTION_RE = re.compile(r"[\r\n]")
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2
 RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503}
-BLOCKED_ATTACHMENT_EXTENSIONS = {
-    '.exe', '.bat', '.cmd', '.com', '.scr', '.msi', '.ps1', '.vbs', '.js',
-    '.jar', '.sh', '.dll', '.pif', '.gadget', '.wsf', '.hta'}
-
+ALLOWED_ATTACHMENT_EXTENSIONS = { '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.ppt', '.pptx', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.mp3', }
 def get_service():
     if not os.path.exists(CLIENT_SECRET_PATH):
-        raise FileNotFoundError(f"Client secret file not found at '{CLIENT_SECRET_PATH}'. " "Download it from Google Cloud Console and place it there.")
+        raise FileNotFoundError(f"Client secret file not found at '{CLIENT_SECRET_PATH}'. Download it from Google Cloud Console and place it there.")
     if os.path.getsize(CLIENT_SECRET_PATH) == 0:
         raise ValueError(f"Client secret file at '{CLIENT_SECRET_PATH}' is empty.")
-    user_id = res.user.id  # uuid from the supabase auth session, matches Gmail.id's uuid type
+    user_id = res.user.id
     with open(CLIENT_SECRET_PATH, 'r') as f:
         client_secrets = json.load(f)
-    rows = dbimp.select_rows("Gmail",select="Access_token,Refresh_token,Token_expire",filters={"id": user_id},)
+    rows = dbimp.select_rows("Gmail", select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})
     row = rows[0] if rows else None
     creds = None
     if row:
-        creds = Credentials( token=row["Access_token"], refresh_token=row["Refresh_token"], token_uri="https://oauth2.googleapis.com/token", client_id=client_secrets["installed"]["client_id"], client_secret=client_secrets["installed"]["client_secret"], scopes=SCOPES,)
+        creds = Credentials(token=row["Access_token"], refresh_token=row["Refresh_token"],token_uri="https://oauth2.googleapis.com/token",client_id=client_secrets["installed"]["client_id"], client_secret=client_secrets["installed"]["client_secret"],scopes=SCOPES, )
         if row.get("Token_expire"):
             creds.expiry = datetime.fromisoformat(row["Token_expire"])
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            dbimp.update_rows("Gmail",{ "Access_token": creds.token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat(),},   filters={"id": user_id},)
+            dbimp.update_rows( "Gmail",{"Access_token": creds.token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat()}, filters={"id": user_id},)
         else:
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
-            payload = {"Access_token": creds.token, "Refresh_token": creds.refresh_token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat(),}
+            service = build('gmail', 'v1', credentials=creds)
+            mail_add = service.users().getProfile(userId='me').execute()['emailAddress']
+            payload = {"Access_token": creds.token, "Refresh_token": creds.refresh_token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat(),"Email": mail_add, }
             if row:
                 dbimp.update_rows("Gmail", payload, filters={"id": user_id})
             else:
@@ -82,7 +81,6 @@ def get_service():
     if set(SCOPES) - set(getattr(creds, 'scopes', None) or SCOPES):
         logger.warning("Stored credentials may not cover all requested scopes.")
     return build('gmail', 'v1', credentials=creds)
-
 
 def _validate_email_address(address: str, label: str = "recipient") -> None:
     if not address or not isinstance(address, str):
@@ -273,7 +271,7 @@ def mark_as_unread(service, message_id: str) -> dict:
         raise ValueError("message_id must be a non-empty string.")
     return _with_retry(service.users().messages().modify, userId='me', id=message_id,body={'addLabelIds': ['UNREAD']})
 
-def download_attachments(service, message_id: str, out_dir: str = "attachments",allow_executable_types: bool = False) -> list[str]:
+def download_attachments(service, message_id: str, out_dir: str = "attachments") -> list[str]:
     if not message_id or not isinstance(message_id, str):
         raise ValueError("message_id must be a non-empty string.")
     os.makedirs(out_dir, exist_ok=True)
@@ -293,7 +291,7 @@ def download_attachments(service, message_id: str, out_dir: str = "attachments",
         if not filename or not attachment_id:
             return
         ext = os.path.splitext(filename)[1].lower()
-        if ext in BLOCKED_ATTACHMENT_EXTENSIONS and not allow_executable_types:
+        if ext not in ALLOWED_ATTACHMENT_EXTENSIONS :
             logger.warning(f"Skipping '{filename}': potentially dangerous file type ({ext}).")
             skipped.append(filename)
             return
