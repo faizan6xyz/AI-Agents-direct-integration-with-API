@@ -24,7 +24,7 @@ if user_id:
     exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": user_id})
     if not exist:
         dbimp.insert_rows(TABLE_NAME, {"id": user_id})
-SCOPE = "instagram_business_basic,instagram_business_content_publish"
+SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments"
 
 def refresh_token(user_id, access_token, token_expire):
     resp = requests.get("https://graph.instagram.com/refresh_access_token",params={"grant_type": "ig_refresh_token", "access_token": access_token},).json()
@@ -67,9 +67,9 @@ def instagram_callback():
         return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
     return jsonify({"user_id": ig_user_id, "access_token": long_token})
 
-@app.route("/instagram/posts")
-def get_instagram_posts():
-    rows = dbimp.select_rows(TABLE_NAME, select={"Access_token", "Token_expire"}, filters={"id": user_id})
+@app.route("/instagram/posts/<account_id>")
+def get_instagram_posts(account_id):
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire" , filters={"id": user_id , "Account_id" : account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -92,6 +92,34 @@ def get_instagram_posts():
         url = resp.get("paging", {}).get("next")
         params = None
     return jsonify({"count": len(posts), "posts": posts})
+
+@app.route("/instagram/comments/<account_id>/<media_id>")
+def get_instagram_comments(account_id, media_id):
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token, Token_expiry)
+    fields = "id,text,username,timestamp,like_count"
+    url = f"https://graph.instagram.com/{media_id}/comments"
+    params = {"fields": fields, "access_token": access_token}
+    comments = []
+    while url:
+        resp = requests.get(url, params=params).json()
+        if "error" in resp:
+            return jsonify(resp), 400
+        comments.extend(resp.get("data", []))
+        url = resp.get("paging", {}).get("next")
+        params = None
+    return jsonify({"count": len(comments), "comments": comments})
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
