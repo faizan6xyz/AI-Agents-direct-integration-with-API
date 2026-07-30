@@ -24,8 +24,18 @@ if user_id:
     exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": user_id})
     if not exist:
         dbimp.insert_rows(TABLE_NAME, {"id": user_id})
-        
 SCOPE = "instagram_business_basic,instagram_business_content_publish"
+
+def refresh_token(user_id, access_token, token_expire):
+    resp = requests.get("https://graph.instagram.com/refresh_access_token",params={"grant_type": "ig_refresh_token", "access_token": access_token},).json()
+    new_token = resp.get("access_token")
+    seconds = resp.get("expires_in")
+    if new_token and seconds:
+        new_expire = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        dbimp.update_rows(TABLE_NAME, {"Access_token": new_token, "Token_expire": new_expire.isoformat()},filters={"id": user_id},)
+        return new_token
+    return access_token
+
 @app.route("/auth/instagram/login")
 def instagram_login():
     params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code"}
@@ -37,18 +47,12 @@ def instagram_callback():
     code = request.args.get("code")
     if not code:
         return jsonify({"error": "missing code"}), 400
-    token_resp = requests.post("https://api.instagram.com/oauth/access_token",data={"client_id": IG_APP_ID,
-                                                                                    "client_secret": IG_APP_SECRET,
-                                                                                    "grant_type": "authorization_code",
-                                                                                    "redirect_uri": IG_REDIRECT_URI,
-                                                                                    "code": code,},).json()
+    token_resp = requests.post("https://api.instagram.com/oauth/access_token",data={"client_id": IG_APP_ID, "client_secret": IG_APP_SECRET,"grant_type": "authorization_code","redirect_uri": IG_REDIRECT_URI,"code": code,},).json()
     short_token = token_resp.get("access_token")
     ig_user_id = token_resp.get("user_id")
     if not short_token:
         return jsonify({"error": "token exchange failed", "details": token_resp}), 400
-    long_resp = requests.get("https://graph.instagram.com/access_token",params={"grant_type": "ig_exchange_token",
-                                                                                "client_secret": IG_APP_SECRET,
-                                                                                "access_token": short_token, },).json()
+    long_resp = requests.get("https://graph.instagram.com/access_token",params={"grant_type": "ig_exchange_token", "client_secret": IG_APP_SECRET, "access_token": short_token, },).json()
     long_token = long_resp.get("access_token")
     seconds = long_resp.get("expires_in")
     if not long_token or not seconds:
@@ -65,9 +69,13 @@ def instagram_callback():
 
 @app.route("/instagram/posts")
 def get_instagram_posts():
-    access_token = request.args.get("access_token")
+    row = dbimp.select_rows(TABLE_NAME, select={"Access_token", "Token_expire"}, filters={"id": user_id})[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
     if not access_token:
         return jsonify({"error": "missing access_token"}), 400
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        refresh_token(user_id , access_token,Token_expiry)
     fields = "id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count"
     url = "https://graph.instagram.com/me/media"
     params = {"fields": fields, "access_token": access_token}
