@@ -69,13 +69,17 @@ def instagram_callback():
 
 @app.route("/instagram/posts")
 def get_instagram_posts():
-    row = dbimp.select_rows(TABLE_NAME, select={"Access_token", "Token_expire"}, filters={"id": user_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select={"Access_token", "Token_expire"}, filters={"id": user_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
     access_token = row["Access_token"]
     Token_expiry = row["Token_expire"]
-    if not access_token:
+    if not access_token or not Token_expiry:
         return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        refresh_token(user_id , access_token,Token_expiry)
+        access_token = refresh_token(user_id, access_token, Token_expiry)
     fields = "id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count"
     url = "https://graph.instagram.com/me/media"
     params = {"fields": fields, "access_token": access_token}
