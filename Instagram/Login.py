@@ -16,18 +16,18 @@ mail = os.environ.get("email")
 passw = os.environ.get("pass")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE_NAME = "Instagram"
-try:
-    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
-except Exception:
-    res = supabase.auth.sign_up({"email": mail, "password": passw})
-user_id = res.user.id if res else None
-if user_id:
-    exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": user_id})
-    if not exist:
-        dbimp.insert_rows(TABLE_NAME, {"id": user_id})
 SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,"
 
-def refresh_token(user_id, access_token, token_expire):
+def check_user_id(uuser_id):
+    rows = dbimp.select_rows("users", select="user_id", filters={"id": uuser_id})
+    if not rows:
+        return False
+    exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": uuser_id})
+    if not exist:
+        dbimp.insert_rows(TABLE_NAME, {"id": uuser_id})            
+    return True
+
+def refresh_token(user_id, access_token):
     resp = requests.get("https://graph.instagram.com/refresh_access_token",params={"grant_type": "ig_refresh_token", "access_token": access_token},).json()
     new_token = resp.get("access_token")
     seconds = resp.get("expires_in")
@@ -37,8 +37,11 @@ def refresh_token(user_id, access_token, token_expire):
         return new_token
     return access_token
 
-@app.route("/auth/instagram/login")
+@app.route("/auth/instagram/login") 
 def instagram_login():
+    user_id = request.args.get("user_id")   # takes user_id from http://localhost:5000/auth/instagram/login?user_id=<some_id>
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
     params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code"}
     auth_url = "https://www.instagram.com/oauth/authorize?" + urlencode(params)
     return redirect(auth_url)
@@ -46,8 +49,13 @@ def instagram_login():
 @app.route("/auth/instagram/callback")
 def instagram_callback():
     code = request.args.get("code")
+    user_id = request.args.get("state")
     if not code:
         return jsonify({"error": "missing code"}), 400
+    if not user_id:
+        return jsonify({"error": "missing user id"}), 400
+    if not check_user_id(user_id):
+        return jsonify({"error": "invalid user id"}), 400
     token_resp = requests.post("https://api.instagram.com/oauth/access_token",data={"client_id": IG_APP_ID, "client_secret": IG_APP_SECRET,"grant_type": "authorization_code","redirect_uri": IG_REDIRECT_URI,"code": code,},).json()
     short_token = token_resp.get("access_token")
     ig_user_id = token_resp.get("user_id")
@@ -70,6 +78,10 @@ def instagram_callback():
 
 @app.route("/instagram/posts/<account_id>")
 def get_instagram_posts(account_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x :
+        return " Invalid user id " 
     rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire" , filters={"id": user_id , "Account_id" : account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
@@ -80,7 +92,7 @@ def get_instagram_posts(account_id):
         return jsonify({"error": "missing access_token"}), 400
     Token_expiry = datetime.fromisoformat(Token_expiry)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        access_token = refresh_token(user_id, access_token, Token_expiry)
+        access_token = refresh_token(user_id, access_token)
     fields = "id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count"
     url = "https://graph.instagram.com/me/media"
     params = {"fields": fields, "access_token": access_token}
@@ -96,6 +108,10 @@ def get_instagram_posts(account_id):
 
 @app.route("/instagram/comments/<account_id>/<media_id>")
 def get_instagram_comments(account_id, media_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x :
+        return " Invalid user id " 
     rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
@@ -108,7 +124,7 @@ def get_instagram_comments(account_id, media_id):
     if Token_expiry.tzinfo is None:
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        access_token = refresh_token(user_id, access_token, Token_expiry)
+        access_token = refresh_token(user_id, access_token)
     fields = "id,text,username,timestamp,like_count"
     url = f"https://graph.instagram.com/{media_id}/comments"
     params = {"fields": fields, "access_token": access_token}
@@ -122,8 +138,12 @@ def get_instagram_comments(account_id, media_id):
         params = None
     return jsonify({"count": len(comments), "comments": comments})
 
-@app.route("/instagram/upload/<account_id>/story")
+@app.route("/instagram/upload/<account_id>/story", methods=["POST"])
 def story(account_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x :
+        return " Invalid user id " 
     rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
@@ -136,8 +156,24 @@ def story(account_id):
     if Token_expiry.tzinfo is None:
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        access_token = refresh_token(user_id, access_token, Token_expiry)
-    id_post = uploadd.post_story(access_token,account_id,)    
+        access_token = refresh_token(user_id, access_token)
+    data = request.get_json()
+    if not data or not data.get("url"):
+        return jsonify({"error": "url is required"}), 400
+    url = data["url"]
+    video_type = str(data.get("video", "")).strip().lower() == "true" # if condition
+    id_post = uploadd.post_story(access_token, account_id, video_type)
+    if id_post:
+        return jsonify({"success": True, "media_id": id_post }), 200
+    else:
+        return jsonify({"success": False, "message": "Unable to post story."}), 500
+    
+    
+    
+    
+    
+    
+    
     
 if __name__ == "__main__":
     app.run(port=5000, debug=True)

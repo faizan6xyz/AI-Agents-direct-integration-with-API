@@ -8,23 +8,15 @@ import requests
 from urllib.parse import urlparse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ig_post")
-ACCESS_TOKEN = os.environ.get("IG_ACCESS_TOKEN", "YOUR_LONG_LIVED_TOKEN")
-IG_USER_ID = os.environ.get("IG_USER_ID", "YOUR_IG_USER_ID")
 GRAPH_VERSION = "v22.0"
 BASE_URL = f"https://graph.facebook.com/{GRAPH_VERSION}"
-if ACCESS_TOKEN in (None, "", "YOUR_LONG_LIVED_TOKEN"):
-    raise RuntimeError(
-        "IG_ACCESS_TOKEN is not set. Export it as an environment variable "
-        "rather than hardcoding it in source."
-    )
-if IG_USER_ID in (None, "", "YOUR_IG_USER_ID"):
-    raise RuntimeError("IG_USER_ID is not set as an environment variable.")
+
 MAX_REEL_SECONDS = 15 * 60      # 15 min
 MAX_STORY_SECONDS = 60          # 60 sec
 MAX_VIDEO_SECONDS = 60 * 60     # 60 min
 MIN_VIDEO_SECONDS = 3           # IG rejects clips shorter than this
-MAX_CAPTION_CHARS = 2200
-MAX_HASHTAGS = 30
+MAX_CAPTION_CHARS = 2170
+MAX_HASHTAGS = 5
 MAX_PHOTO_BYTES = 8 * 1024 * 1024        # 8 MB
 MAX_VIDEO_BYTES = 1024 * 1024 * 1024     # 1 GB
 MIN_ASPECT_RATIO = 4 / 5    # tallest allowed (portrait)
@@ -45,9 +37,7 @@ def _redact(text: str) -> str:
 def _validate_media_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in ALLOWED_URL_SCHEMES:
-        raise ValueError(
-            f"Refusing to fetch '{url}': only {ALLOWED_URL_SCHEMES} URLs are allowed."
-        )
+        raise ValueError(f"Refusing to fetch '{url}': only {ALLOWED_URL_SCHEMES} URLs are allowed." )
     if not parsed.netloc:
         raise ValueError(f"'{url}' is not a valid absolute URL.")
 
@@ -93,128 +83,50 @@ def _get(endpoint: str, params: dict) -> dict:
         raise RuntimeError(_redact(f"Instagram API error: {data['error']}"))
     return data
 
-def get_video_duration_seconds(video_url: str, timeout: int = 30) -> float:
-    cmd = [
-        "ffprobe",
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "json",
-        video_url,
-    ]
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=True
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "ffprobe not found. Install ffmpeg (e.g. `apt install ffmpeg`) "
-            "to enable duration checks."
-        )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"ffprobe failed to read '{video_url}': {e.stderr}")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"ffprobe timed out probing '{video_url}'")
 
-    try:
-        duration = float(json.loads(result.stdout)["format"]["duration"])
-    except (KeyError, ValueError, json.JSONDecodeError):
-        raise RuntimeError(f"Could not parse duration for '{video_url}'")
-    return duration
 
-def _check_duration_limit(video_url: str, max_seconds: int, label: str, min_seconds: int = MIN_VIDEO_SECONDS) -> None:
-    duration = get_video_duration_seconds(video_url)
-    if duration > max_seconds:
-        raise ValueError(
-            f"{label} video is {duration:.1f}s long, which exceeds the "
-            f"{max_seconds}s ({max_seconds / 60:.0f} min) limit. "
-            f"URL: {video_url}"
-        )
-    if duration < min_seconds:
-        raise ValueError(
-            f"{label} video is only {duration:.1f}s long, which is below "
-            f"the {min_seconds}s minimum. URL: {video_url}"
-        )
 
-def get_video_resolution(video_url: str, timeout: int = 30) -> tuple[int, int]:
-    cmd = [
-        "ffprobe",
-        "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
-        "-of", "json",
-        video_url,
-    ]
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=True
-        )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "ffprobe not found. Install ffmpeg (e.g. `apt install ffmpeg`) "
-            "to enable resolution checks."
-        )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"ffprobe failed to read '{video_url}': {e.stderr}")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"ffprobe timed out probing '{video_url}'")
-    try:
-        stream = json.loads(result.stdout)["streams"][0]
-        return int(stream["width"]), int(stream["height"])
-    except (KeyError, IndexError, ValueError, json.JSONDecodeError):
-        raise RuntimeError(f"Could not parse resolution for '{video_url}'")
 
-def _check_aspect_ratio(width: int, height: int, label: str, url: str) -> None:
-    ratio = width / height
-    if not (MIN_ASPECT_RATIO - 0.01 <= ratio <= MAX_ASPECT_RATIO + 0.01):
-        raise ValueError(
-            f"{label} has aspect ratio {ratio:.2f} ({width}x{height}), which "
-            f"falls outside Instagram's accepted range of {MIN_ASPECT_RATIO:.2f} "
-            f"(4:5 portrait) to {MAX_ASPECT_RATIO:.2f} (1.91:1 landscape). URL: {url}"
-        )
 
-def get_remote_file_size(url: str, timeout: int = 15) -> int:
-    resp = requests.head(url, timeout=timeout, allow_redirects=True)
-    size = resp.headers.get("Content-Length")
-    if size is None:
-        raise RuntimeError(
-            f"Could not determine file size for '{url}' "
-            "(server did not return Content-Length)."
-        )
-    return int(size)
 
-def _check_file_size(url: str, max_bytes: int, label: str) -> None:
-    size = get_remote_file_size(url)
-    if size > max_bytes:
-        raise ValueError(
-            f"{label} file is {size / (1024 * 1024):.1f} MB, which exceeds "
-            f"the {max_bytes / (1024 * 1024):.0f} MB limit. URL: {url}"
-        )
 
-def _check_caption(caption: str) -> None:
+#get video size resolation and other shit things about the file wull be done using the drive 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# using the check username function for the tagging 
+def check_ig_username(target_username, ig_user_id , access_token):
+    url = f"https://graph.facebook.com/v22.0/{ig_user_id}"
+    params = { "fields": f"business_discovery.username({target_username})" "{username,id,followers_count,media_count,biography}","access_token": access_token,}
+    resp = requests.get(url, params=params, timeout=10)
+    payload = resp.json()
+    if resp.status_code == 200 and "business_discovery" in payload:
+        return True   # username exists (as a Business/Creator account)
+    return False       # not found, or exists but isn't a business/creator account
+
+def _check_caption(caption: str) -> str:
     if len(caption) > MAX_CAPTION_CHARS:
-        raise ValueError(
-            f"Caption is {len(caption)} characters, which exceeds Instagram's "
-            f"{MAX_CAPTION_CHARS} character limit."
-        )
-    hashtag_count = len(re.findall(r"(?<!\w)#\w+", caption))
-    if hashtag_count > MAX_HASHTAGS:
-        raise ValueError(
-            f"Caption has {hashtag_count} hashtags, which exceeds Instagram's "
-            f"{MAX_HASHTAGS} hashtag limit."
-        )
-
-# validates username is present and x/y coordinates are within 0–1 before they're sent
-def _check_user_tags(user_tags: list[dict] = None) -> None:
-    if not user_tags:
-        return
-    for tag in user_tags:
-        if "username" not in tag or not tag["username"]:
-            raise ValueError(f"user_tags entry missing 'username': {tag}")
-        for coord in ("x", "y"):
-            if coord not in tag:
-                raise ValueError(f"user_tags entry missing '{coord}': {tag}")
-            if not (0.0 <= float(tag[coord]) <= 1.0):
-                raise ValueError(f"user_tags '{coord}' must be between 0 and 1, got {tag[coord]}: {tag}")
+        caption = caption[:MAX_CAPTION_CHARS]
+    hashtags = list(re.finditer(r"(?<!\w)#\w+", caption))
+    if len(hashtags) > MAX_HASHTAGS:
+        cutoff = hashtags[MAX_HASHTAGS].start()
+        caption = caption[:cutoff].rstrip()
+    match = re.search(r"(?<!\w)#\w+$", caption)
+    if match and len(caption) == MAX_CAPTION_CHARS:
+        caption = caption[:match.start()].rstrip()
+    return caption
 
 # Container is the object that holds the media and the other info beofre publishing
 def wait_for_container(container_id: str, timeout: int = 300, interval: int = 5) -> None:
@@ -233,35 +145,37 @@ def wait_for_container(container_id: str, timeout: int = 300, interval: int = 5)
         elapsed += interval
     raise TimeoutError(f"Container {container_id} did not finish within {timeout}s")
 
-def _build_tagging_params(user_tags: list[dict] = None, location_id: str = None) -> dict:
+def _build_tagging_params(user_tags: list[dict] = None) -> dict:
     extra = {}
     if user_tags:
         extra["user_tags"] = json.dumps(user_tags)
-    if location_id:
-        extra["location_id"] = location_id
     return extra
 
-def post_photo(ACCESS_TOKEN, IG_USER_ID, image_url: str, caption: str = "", user_tags: list[dict] = None, location_id: str = None, publish: bool = True,) -> str:
+
+def post_photo(ACCESS_TOKEN , IG_USER_ID , image_url: str, caption: str = "", user_tags: list[dict] = None,  publish: bool = True,) -> str:
     _validate_media_url(image_url)
     _check_caption(caption)
-    _check_user_tags(user_tags)
-    _check_file_size(image_url, MAX_PHOTO_BYTES, "Photo")
-    params = {
-        "image_url": image_url,
-        "caption": caption,
-        "access_token": ACCESS_TOKEN,
-        **_build_tagging_params(user_tags, location_id),
-    }
+    usernametag = []
+    for i in user_tags:
+        x = check_ig_username(i["username"], IG_USER_ID , ACCESS_TOKEN)
+        if x :
+            usernametag.append(i["username"])
+    params = {"image_url": image_url, "caption": caption,"access_token": ACCESS_TOKEN, **_build_tagging_params(usernametag),}
     container = _post(f"{IG_USER_ID}/media", params)
     creation_id = container["id"]
+    usernametag.clear()
     if not publish:
         return creation_id
     return publish_container(creation_id)
 
-def post_video(ACCESS_TOKEN, IG_USER_ID, video_url: str, caption: str = "", as_reel: bool = True, user_tags: list[dict] = None, location_id: str = None, thumb_offset_ms: int = None, publish: bool = True,) -> str:
+def post_video(ACCESS_TOKEN , IG_USER_ID , video_url: str, caption: str = "", as_reel: bool = True, user_tags: list[dict] = None,  thumb_offset_ms: int = None, publish: bool = True,) -> str:
     _validate_media_url(video_url)
     _check_caption(caption)
-    _check_user_tags(user_tags)
+    usernametag = []
+    for i in user_tags:
+        x = check_ig_username(i["username"], IG_USER_ID , ACCESS_TOKEN)
+        if x :
+            usernametag.append(i["username"])
     _check_file_size(video_url, MAX_VIDEO_BYTES, "Reel" if as_reel else "Video")
     if as_reel:
         _check_duration_limit(video_url, MAX_REEL_SECONDS, "Reel")
@@ -274,18 +188,19 @@ def post_video(ACCESS_TOKEN, IG_USER_ID, video_url: str, caption: str = "", as_r
         "caption": caption,
         "media_type": "REELS" if as_reel else "VIDEO",
         "access_token": ACCESS_TOKEN,
-        **_build_tagging_params(user_tags, location_id),
+        **_build_tagging_params(user_tags),
     }
     if thumb_offset_ms is not None:
         params["thumb_offset"] = thumb_offset_ms  # cover frame, in milliseconds
     container = _post(f"{IG_USER_ID}/media", params)
     creation_id = container["id"]
+    usernametag.clear()
     wait_for_container(creation_id)
     if not publish:
         return creation_id
     return publish_container(creation_id)
 
-def post_carousel(ACCESS_TOKEN, IG_USER_ID, media_urls: list[str], is_video: list[bool], caption: str = "", location_id: str = None, publish: bool = True,) -> str:
+def post_carousel(ACCESS_TOKEN , IG_USER_ID , media_urls: list[str], is_video: list[bool], caption: str = "", publish: bool = True,) -> str:
     if len(media_urls) != len(is_video):
         raise ValueError("media_urls and is_video must be the same length")
     if not (2 <= len(media_urls) <= 10):
@@ -320,15 +235,13 @@ def post_carousel(ACCESS_TOKEN, IG_USER_ID, media_urls: list[str], is_video: lis
         "caption": caption,
         "access_token": ACCESS_TOKEN,
     }
-    if location_id:
-        params["location_id"] = location_id
     container = _post(f"{IG_USER_ID}/media", params)
     creation_id = container["id"]
     if not publish:
         return creation_id
     return publish_container(creation_id)
 
-def post_story(ACCESS_TOKEN, IG_USER_ID, media_url: str, is_video: bool = False, publish: bool = True) -> str:
+def post_story(ACCESS_TOKEN , IG_USER_ID , media_url: str, is_video: bool = False, publish: bool = True) -> str:
     _validate_media_url(media_url)
     if is_video:
         _check_duration_limit(media_url, MAX_STORY_SECONDS, "Story", min_seconds=1)
@@ -367,14 +280,11 @@ if __name__ == "__main__":
     )
     print(f"Published media id: {media_id}")
 
-    # Example: photo with a user tag and location
+    # Example: photo with a user tag 
     post_photo(
         image_url="https://example.com/photo.jpg",
         caption="At the beach!",
-        user_tags=[{"username": "some_user", "x": 0.5, "y": 0.5}],
-        location_id="123456789",
-    )
-
+        user_tags=[{"username": "some_user", "x": 0.5, "y": 0.5}],)
     # Example: mixed carousel
     post_carousel(
         media_urls=["https://example.com/pic1.jpg", "https://example.com/clip1.mp4"],
