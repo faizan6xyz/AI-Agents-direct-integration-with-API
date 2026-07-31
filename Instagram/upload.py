@@ -214,9 +214,7 @@ def _check_user_tags(user_tags: list[dict] = None) -> None:
             if coord not in tag:
                 raise ValueError(f"user_tags entry missing '{coord}': {tag}")
             if not (0.0 <= float(tag[coord]) <= 1.0):
-                raise ValueError(
-                    f"user_tags '{coord}' must be between 0 and 1, got {tag[coord]}: {tag}"
-                )
+                raise ValueError(f"user_tags '{coord}' must be between 0 and 1, got {tag[coord]}: {tag}")
 
 # Container is the object that holds the media and the other info beofre publishing
 def wait_for_container(container_id: str, timeout: int = 300, interval: int = 5) -> None:
