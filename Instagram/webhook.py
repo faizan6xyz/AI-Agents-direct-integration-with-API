@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify , Flask
 import hmac, hashlib, os, requests
 instagram_bp = Blueprint("instagram_webhook", __name__)
 VERIFY_TOKEN = os.environ.get("IG_WEBHOOK_VERIFY_TOKEN")
@@ -48,3 +48,9 @@ def reply_to_comment(comment_id, message, access_token):
     url = f"https://graph.facebook.com/v21.0/{comment_id}/replies"
     resp = requests.post(url, params={"message": message,"access_token": access_token})
     return resp.json()
+
+app = Flask(__name__)
+app.register_blueprint(instagram_bp)
+
+if __name__ == "__main__":
+    app.run(port=5000, debug=True)

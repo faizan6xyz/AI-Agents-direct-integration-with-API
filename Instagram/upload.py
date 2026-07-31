@@ -241,7 +241,7 @@ def _build_tagging_params(user_tags: list[dict] = None, location_id: str = None)
         extra["location_id"] = location_id
     return extra
 
-def post_photo(image_url: str, caption: str = "", user_tags: list[dict] = None, location_id: str = None, publish: bool = True,) -> str:
+def post_photo(ACCESS_TOKEN, IG_USER_ID, image_url: str, caption: str = "", user_tags: list[dict] = None, location_id: str = None, publish: bool = True,) -> str:
     _validate_media_url(image_url)
     _check_caption(caption)
     _check_user_tags(user_tags)
@@ -258,7 +258,7 @@ def post_photo(image_url: str, caption: str = "", user_tags: list[dict] = None, 
         return creation_id
     return publish_container(creation_id)
 
-def post_video(video_url: str, caption: str = "", as_reel: bool = True, user_tags: list[dict] = None, location_id: str = None, thumb_offset_ms: int = None, publish: bool = True,) -> str:
+def post_video(ACCESS_TOKEN, IG_USER_ID, video_url: str, caption: str = "", as_reel: bool = True, user_tags: list[dict] = None, location_id: str = None, thumb_offset_ms: int = None, publish: bool = True,) -> str:
     _validate_media_url(video_url)
     _check_caption(caption)
     _check_user_tags(user_tags)
@@ -285,7 +285,7 @@ def post_video(video_url: str, caption: str = "", as_reel: bool = True, user_tag
         return creation_id
     return publish_container(creation_id)
 
-def post_carousel(media_urls: list[str], is_video: list[bool], caption: str = "", location_id: str = None, publish: bool = True,) -> str:
+def post_carousel(ACCESS_TOKEN, IG_USER_ID, media_urls: list[str], is_video: list[bool], caption: str = "", location_id: str = None, publish: bool = True,) -> str:
     if len(media_urls) != len(is_video):
         raise ValueError("media_urls and is_video must be the same length")
     if not (2 <= len(media_urls) <= 10):
@@ -328,7 +328,7 @@ def post_carousel(media_urls: list[str], is_video: list[bool], caption: str = ""
         return creation_id
     return publish_container(creation_id)
 
-def post_story(media_url: str, is_video: bool = False, publish: bool = True) -> str:
+def post_story(ACCESS_TOKEN, IG_USER_ID, media_url: str, is_video: bool = False, publish: bool = True) -> str:
     _validate_media_url(media_url)
     if is_video:
         _check_duration_limit(media_url, MAX_STORY_SECONDS, "Story", min_seconds=1)
@@ -358,8 +358,8 @@ def publish_container(creation_id: str) -> str:
     })
     return published["id"]
 
+'''
 if __name__ == "__main__":
-    '''
     # Example: single photo
     media_id = post_photo(
         image_url="https://example.com/photo.jpg",

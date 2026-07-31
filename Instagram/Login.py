@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from flask import Flask, request, redirect, jsonify
 from supabase import create_client, Client
 from datetime import datetime, timezone, timedelta
+import Instagram.upload as uploadd
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 app = Flask(__name__)
@@ -121,5 +122,22 @@ def get_instagram_comments(account_id, media_id):
         params = None
     return jsonify({"count": len(comments), "comments": comments})
 
+@app.route("/instagram/upload/<account_id>/story")
+def story(account_id):
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token, Token_expiry)
+    id_post = uploadd.post_story(access_token,account_id,)    
+    
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
