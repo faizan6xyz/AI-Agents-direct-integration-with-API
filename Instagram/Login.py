@@ -19,12 +19,9 @@ TABLE_NAME = "Instagram"
 SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,"
 
 def check_user_id(uuser_id):
-    rows = dbimp.select_rows("users", select="user_id", filters={"id": uuser_id})
-    if not rows:
-        return False
     exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": uuser_id})
     if not exist:
-        dbimp.insert_rows(TABLE_NAME, {"id": uuser_id})            
+        return False
     return True
 
 def refresh_token(user_id, access_token):
@@ -138,12 +135,13 @@ def get_instagram_comments(account_id, media_id):
         params = None
     return jsonify({"count": len(comments), "comments": comments})
 
+
 @app.route("/instagram/upload/<account_id>/story", methods=["POST"])
 def story(account_id):
     user_id = request.args.get("user_id")
     x = check_user_id(user_id)
-    if not x :
-        return " Invalid user id " 
+    if not x:
+        return " Invalid user id "
     rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
@@ -157,17 +155,16 @@ def story(account_id):
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(user_id, access_token)
-    data = request.get_json()
-    if not data or not data.get("url"):
+    media_url = request.args.get("media_url")
+    is_video = request.args.get("is_video")  # fixed: args (not arg), is_video (not is_vedio)
+    if not media_url:
         return jsonify({"error": "url is required"}), 400
-    url = data["url"]
-    video_type = str(data.get("video", "")).strip().lower() == "true" # if condition
-    id_post = uploadd.post_story(access_token, account_id, video_type)
+    video_type = str(is_video).strip().lower() == "true"
+    id_post = uploadd.post_story(access_token, account_id, media_url, video_type)
     if id_post:
-        return jsonify({"success": True, "media_id": id_post }), 200
+        return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post story."}), 500
-    
     
     
     

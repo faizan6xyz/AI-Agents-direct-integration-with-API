@@ -14,13 +14,11 @@ from itsdangerous import URLSafeSerializer, BadSignature
 from cryptography.fernet import Fernet
 import database.UserDB as dbimp
 app = Flask(__name__)
-app.secret_key = os.environ["FLASK_SECRET_KEY"]
 CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
 SCOPES = { "GOOGLE_DRIVE_SCOPES":"https://www.googleapis.com/auth/drive.file"}
 fernet = Fernet(os.environ["FERNET_KEY"].encode())
-serializer = URLSafeSerializer(app.secret_key)
 table_name = "Drive" 
 PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
 SUBFOLDERS = ["photos", "videos", "pdf", "documents"]
@@ -112,17 +110,13 @@ def connect_drive():
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
     flow = build_flow()
-    signed_state = serializer.dumps(user_id)
-    auth_url, _ = flow.authorization_url( access_type="offline", prompt="consent", state=signed_state )
+    auth_url, _ = flow.authorization_url( access_type="offline", prompt="consent",  )
     return redirect(auth_url)
 
 @app.route("/oauth/callback")
 def oauth_callback():
     signed_state = request.args.get("state")
-    try:
-        user_id = serializer.loads(signed_state)
-    except BadSignature:
-        return jsonify({"error": "invalid state"}), 400
+    user_id = request.args.get("user_id")
     flow = build_flow()
     flow.fetch_token(code=request.args["code"])
     creds = flow.credentials
@@ -145,7 +139,7 @@ def list_files():
         page_token = response.get("nextPageToken")
         if not page_token:
             break
-    return jsonify({"user_id": user_id, "count": len(all_files), "files": all_files })
+    return jsonify({ "count": len(all_files), "files": all_files })
 
 @app.route("/drive/setup-folders", methods=["POST"])
 def setup_folders():
@@ -159,7 +153,7 @@ def setup_folders():
         structure = create_platform_folder_structure(service)
     except HttpError as e:
         return jsonify({"error": "drive error", "detail": str(e)}), 400
-    return jsonify({"user_id": user_id, "folders": structure})
+    return jsonify({ "folders": structure})
 
 @app.route("/drive/upload", methods=["POST"])
 def upload_file():
@@ -197,7 +191,7 @@ def upload_file():
         return jsonify({"error": "drive upload failed", "detail": str(e)}), 400
     finally:
         os.remove(tmp_path)
-    return jsonify({"user_id": user_id, "file": created_file})
+    return jsonify({"file": created_file})
 
 @app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
@@ -215,8 +209,26 @@ def delete_file():
         if status == 404:
             return jsonify({"error": "file not found"}), 404
         return jsonify({"error": "drive error", "details": str(e)}), status
-    return jsonify({"user_id": user_id, "file_id": file_id, "status": "deleted"})
+    return jsonify({ "file_id": file_id, "status": "deleted"})
+
+@app.route("/drive/metadata")
+def get_drive_file_metadata():
+    user_id = request.args.get("user_id")
+    file_id = request.args.get("file_id")
+    if not user_id or not file_id:
+        return jsonify({"error": "user_id and file_id required"}), 400
+    service = get_drive_service(user_id)
+    if not service:
+        return jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401
+    try:
+        file = service.files().get(
+            fileId=file_id,
+            fields="id,name,mimeType,size,videoMediaMetadata,imageMediaMetadata"
+        ).execute()
+    except HttpError as e:
+        return jsonify({"error": "metadata fetch failed", "detail": str(e)}), 400
+    return jsonify({"file": file})
 
 if __name__ == "__main__":
-    # for server        gunicorn -w 4 -b 0.0.0.0:8080 app:app
+    # for server        gunicorn -w 4 -b 0.0.0.0:8080 app:app             insread of py app.py
     app.run(host="0.0.0.0", port=8080, debug=True)
