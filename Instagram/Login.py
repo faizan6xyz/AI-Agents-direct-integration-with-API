@@ -24,7 +24,7 @@ if user_id:
     exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": user_id})
     if not exist:
         dbimp.insert_rows(TABLE_NAME, {"id": user_id})
-SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments"
+SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,"
 
 def refresh_token(user_id, access_token, token_expire):
     resp = requests.get("https://graph.instagram.com/refresh_access_token",params={"grant_type": "ig_refresh_token", "access_token": access_token},).json()
