@@ -223,7 +223,8 @@ def post_story( access_token: str, ig_user_id: str, media_size: int, media_url: 
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
 
-def get_media_insights(media_id, access_token, metrics=("views", "reach", "likes", "comments", "saved", "shares")):
+def get_media_insights(media_id, access_token):
+    metrics=("views", "reach", "likes", "comments", "saved", "shares")
     if not access_token:
         return {"success": False, "data": None, "error": f"missing access_token for {media_id}"}
     url = f"https://graph.facebook.com/v22.0/{media_id}/insights"
@@ -246,8 +247,7 @@ def get_media_insights(media_id, access_token, metrics=("views", "reach", "likes
                 result[name] = values[0].get("value")
     except (KeyError, IndexError, TypeError) as e:
         return {"success": False, "data": None, "error": f"unexpected response shape for {media_id}: {e}"}
-
-    return {"success": True, "data": result, "error": None}
+    return result
 
 
 '''
