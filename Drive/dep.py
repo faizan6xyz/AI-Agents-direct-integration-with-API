@@ -14,11 +14,13 @@ from itsdangerous import URLSafeSerializer, BadSignature
 from cryptography.fernet import Fernet
 import database.UserDB as dbimp
 app = Flask(__name__)
+app.secret_key = os.environ["FLASK_SECRET_KEY"]
 CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
-SCOPES = { "GOOGLE_DRIVE_SCOPES":"https://www.googleapis.com/auth/drive.file"}
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 fernet = Fernet(os.environ["FERNET_KEY"].encode())
+serializer = URLSafeSerializer(app.secret_key)
 table_name = "Drive" 
 PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
 SUBFOLDERS = ["photos", "videos", "pdf", "documents"]
@@ -110,13 +112,17 @@ def connect_drive():
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
     flow = build_flow()
-    auth_url, _ = flow.authorization_url( access_type="offline", prompt="consent",  )
+    signed_state = serializer.dumps(user_id)
+    auth_url, _ = flow.authorization_url( access_type="offline", prompt="consent", state=signed_state )
     return redirect(auth_url)
 
 @app.route("/oauth/callback")
 def oauth_callback():
     signed_state = request.args.get("state")
-    user_id = request.args.get("user_id")
+    try:
+        user_id = serializer.loads(signed_state)
+    except BadSignature:
+        return jsonify({"error": "invalid state"}), 400
     flow = build_flow()
     flow.fetch_token(code=request.args["code"])
     creds = flow.credentials
@@ -172,7 +178,8 @@ def upload_file():
     try:
         platform = request.args.get("platform")
         subfolder = request.args.get("subfolder")
-        parent_id = request.args.get("parent_id")   
+        parent_id = request.args.get("parent_id")
+        make_public = True
         file_metadata = {"name": uploaded_file.filename}
         if platform or subfolder:
             if platform not in PLATFORM_FOLDERS:
@@ -184,14 +191,16 @@ def upload_file():
             file_metadata["parents"] = [sub_id]
         elif parent_id:
             file_metadata["parents"] = [parent_id]
-
         media = MediaFileUpload(tmp_path, mimetype=uploaded_file.mimetype, resumable=True)
-        created_file = service.files().create( body=file_metadata, media_body=media, fields="id, name, webViewLink, mimeType" ).execute()
+        created_file = service.files().create(body=file_metadata, media_body=media, fields="id, name, webViewLink, webContentLink, mimeType" ).execute()
+        file_id = created_file["id"]
+        if make_public:
+            service.permissions().create(fileId=file_id, body={"type": "anyone", "role": "reader"}, ).execute()
     except HttpError as e:
         return jsonify({"error": "drive upload failed", "detail": str(e)}), 400
     finally:
         os.remove(tmp_path)
-    return jsonify({"file": created_file})
+    return jsonify({"file_id": file_id, "name": created_file.get("name"),"mime_type": created_file.get("mimeType"), "url": created_file.get("webViewLink"),"download_url": created_file.get("webContentLink"),  "public": make_public,})   # download url is the media url to pass
 
 @app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
@@ -221,10 +230,7 @@ def get_drive_file_metadata():
     if not service:
         return jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401
     try:
-        file = service.files().get(
-            fileId=file_id,
-            fields="id,name,mimeType,size,videoMediaMetadata,imageMediaMetadata"
-        ).execute()
+        file = service.files().get(fileId=file_id,fields="id,name,mimeType,size,videoMediaMetadata,imageMediaMetadata").execute()
     except HttpError as e:
         return jsonify({"error": "metadata fetch failed", "detail": str(e)}), 400
     return jsonify({"file": file})
