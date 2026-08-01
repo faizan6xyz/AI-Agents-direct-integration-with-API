@@ -223,6 +223,32 @@ def post_story( access_token: str, ig_user_id: str, media_size: int, media_url: 
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
 
+def get_media_insights(media_id, access_token, metrics=("views", "reach", "likes", "comments", "saved", "shares")):
+    if not access_token:
+        return {"success": False, "data": None, "error": f"missing access_token for {media_id}"}
+    url = f"https://graph.facebook.com/v22.0/{media_id}/insights"
+    params = {"metric": ",".join(metrics), "access_token": access_token}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        payload = response.json()
+    except requests.RequestException as e:
+        return {"success": False, "data": None, "error": f"request failed for {media_id}: {e}"}
+    except ValueError as e:
+        return {"success": False, "data": None, "error": f"response was not valid JSON for {media_id}: {e}"}
+    if "error" in payload:
+        return {"success": False, "data": None, "error": f"API error for {media_id}: {payload['error']}"}
+    result = {}
+    try:
+        for item in payload.get("data", []):
+            name = item.get("name")
+            values = item.get("values", [])
+            if name and values:
+                result[name] = values[0].get("value")
+    except (KeyError, IndexError, TypeError) as e:
+        return {"success": False, "data": None, "error": f"unexpected response shape for {media_id}: {e}"}
+
+    return {"success": True, "data": result, "error": None}
+
 
 '''
 if __name__ == "__main__":

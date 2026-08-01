@@ -292,5 +292,26 @@ def video(account_id):
     else:
         return jsonify({"success": False, "message": "Unable to post video."}), 500
     
+@app.route("/instagram/upload/<account_id>/crousal", methods=["POST"])
+def video(account_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x:
+        return " Invalid user id "
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token)
+    
+    
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
