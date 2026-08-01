@@ -260,7 +260,7 @@ def video(account_id):
     media_size = request.args.get("media_size")
     publish = request.args.get("publish")
     caption = request.args.get("caption", "")
-    as_reeel = request.args.get("as_reel")
+    as_reel = request.args.get("as_reel")
     height = request.args.get("height")
     width = request.args.get("width")
     duration = request.args.get("duration")
@@ -280,7 +280,7 @@ def video(account_id):
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
     publish_now = str(publish).strip().lower() == "true"
-    as_reeel = str(as_reeel).strip().lower() == "true"
+    as_reeel = str(as_reel).strip().lower() == "true"
     if cover_url and not as_reeel:
         return jsonify({"success": False, "message": "cover_url is only supported when as_reel is true"}), 400
     try:
@@ -291,9 +291,9 @@ def video(account_id):
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post video."}), 500
-    
-@app.route("/instagram/upload/<account_id>/crousal", methods=["POST"])
-def video(account_id):
+ 
+@app.route("/instagram/upload/<account_id>/carousel", methods=["POST"])
+def carousel(account_id):
     user_id = request.args.get("user_id")
     x = check_user_id(user_id)
     if not x:
@@ -311,7 +311,32 @@ def video(account_id):
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(user_id, access_token)
-    
+    publish = request.args.get("publish")
+    caption = request.args.get("caption", "")
+    media_size = request.args.getlist("media_size")
+    media_duration = request.args.getlist("media_duration")
+    media_urls = request.args.getlist("media_urls")
+    is_video = request.args.getlist("is_video")
+    if not media_urls or not is_video or not media_size or not media_duration:
+        return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration are all required"}), 400
+    if not (len(media_urls) == len(is_video) == len(media_size) == len(media_duration)):
+        return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration must all be the same length"}), 400
+    is_videoo = [str(p).strip().lower() == "true" for p in is_video]
+    media_sizee = [_coerce_int(f"media_size[{i}]", p) for i, p in enumerate(media_size)]
+    if any(v is None for v in media_sizee):
+        return jsonify({"success": False, "message": "one or more media_size values are not valid ints"}), 400
+    media_durationn = [_coerce_int(f"media_duration[{i}]", p) for i, p in enumerate(media_duration)]
+    if any(v is None for v in media_durationn):
+        return jsonify({"success": False, "message": "one or more media_duration values are not valid ints"}), 400
+    publish_now = str(publish).strip().lower() == "true"
+    try:
+        id_post = uploadd.post_carousel( access_token=access_token, ig_user_id=account_id, is_video=is_videoo, media_size=media_sizee, media_duration=media_durationn, media_urls=media_urls, publish=publish_now, caption=caption, )
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Unable to post carousel: {e}"}), 500
+    if id_post:
+        return jsonify({"success": True, "media_id": id_post}), 200
+    else:
+        return jsonify({"success": False, "message": "Unable to post carousel."}), 500
     
 if __name__ == "__main__":
     app.run(port=5000, debug=True)

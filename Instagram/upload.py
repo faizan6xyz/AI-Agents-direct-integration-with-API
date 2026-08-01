@@ -164,7 +164,7 @@ def post_video(access_token: str, ig_user_id: str, height: int, width: int, vide
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
  
-def post_carousel( access_token: str, ig_user_id: str, media_size: list, media_duration: list, media_urls: list, is_video: list, caption: str = "", publish: bool = True, ) -> str:
+def post_carousel( access_token: str, ig_user_id: str,   media_size: list[int], media_duration: list[int], media_urls: list[str], is_video: list[bool], caption: str = "", publish: bool = True, ) -> str:
     if len(media_urls) != len(is_video):
         raise ValueError("media_urls and is_video must be the same length")
     if not (2 <= len(media_urls) <= 10):
