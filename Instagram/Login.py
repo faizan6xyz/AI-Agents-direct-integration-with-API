@@ -24,9 +24,10 @@ def check_user_id(uuser_id):
         return False
     return True
 
-def _validate_int(name: str, value) -> None:
+def _validate_int(name: str, value) -> bool:
     if not isinstance(value, int) or isinstance(value, bool):
         return False
+    return True
     
 def refresh_token(user_id, access_token):
     resp = requests.get("https://graph.instagram.com/refresh_access_token",params={"grant_type": "ig_refresh_token", "access_token": access_token},).json()
@@ -139,6 +140,13 @@ def get_instagram_comments(account_id, media_id):
         params = None
     return jsonify({"count": len(comments), "comments": comments})
 
+def _coerce_int(name: str, value):
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 @app.route("/instagram/upload/<account_id>/story", methods=["POST"])
 def story(account_id):
@@ -160,22 +168,31 @@ def story(account_id):
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(user_id, access_token)
     media_url = request.args.get("media_url")
-    is_video = request.args.get("is_video") 
+    is_video = request.args.get("is_video")
     media_size = request.args.get("media_size")
     publish = request.args.get("publish")
     duration = request.args.get("duration")
-    if not media_url or not media_size :
+    if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
-    if not _validate_int("media_size", media_size) or not _validate_int("duration", duration) :
-        return jsonify({"success": False, "message": "Unable to post story. due to duration  / media size int value"}), 500
-    video_type = str(is_video).strip().lower() == "true"  # if condition for isvideo gives true when statisfies
-    publish_now = str(publish).strip().lower() == "true"  # if condition for publish gives true when statisfies
-    id_post = uploadd.post_story(access_token= access_token, ig_user_id= account_id, media_size= media_size , media_url= media_url, publish= publish_now, is_video= video_type , media_duration= duration)
+    media_size = _coerce_int("media_size", media_size)
+    duration = _coerce_int("duration", duration)
+    if media_size is None or duration is None:
+        return jsonify({"success": False, "message": "Unable to post story. due to duration / media size int value"}), 400
+    try:
+        _validate_int("media_size", media_size)
+        _validate_int("duration", duration)
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+    video_type = str(is_video).strip().lower() == "true"
+    publish_now = str(publish).strip().lower() == "true"
+    try:
+        id_post = uploadd.post_story( access_token=access_token, ig_user_id=account_id, media_size=media_size, media_url=media_url, publish=publish_now, is_video=video_type, media_duration=duration, )
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Unable to post story: {e}"}), 500
     if id_post:
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post story."}), 500
-
 
 @app.route("/instagram/upload/<account_id>/photo", methods=["POST"])
 def photo(account_id):
@@ -195,22 +212,29 @@ def photo(account_id):
     if Token_expiry.tzinfo is None:
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        access_token = refresh_token(user_id, access_token)  
+        access_token = refresh_token(user_id, access_token)
     media_url = request.args.get("media_url")
     media_size = request.args.get("media_size")
     publish = request.args.get("publish")
-    caption = request.args.get("caption")
-    if not media_url or not media_size :
+    caption = request.args.get("caption", "")
+    if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
-    if not _validate_int("media_size", media_size)  :
-        return jsonify({"success": False, "message": "Unable to post story. due media szie int value"}), 500
+    media_size = _coerce_int("media_size", media_size)
+    if media_size is None:
+        return jsonify({"success": False, "message": "Unable to post photo. due media size int value"}), 400
+    try:
+        _validate_int("media_size", media_size)
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
     publish_now = str(publish).strip().lower() == "true"
-    id_post = uploadd.post_photo(access_token=access_token, ig_user_id=account_id, image_url= media_url, caption=caption, media_size=media_size , publish=publish_now )
+    try:
+        id_post = uploadd.post_photo( access_token=access_token, ig_user_id=account_id, image_url=media_url, caption=caption, media_size=media_size, publish=publish_now,)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Unable to post photo: {e}"}), 500
     if id_post:
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
-        return jsonify({"success": False, "message": "Unable to post story."}), 500
-
+        return jsonify({"success": False, "message": "Unable to post photo."}), 500
 
 @app.route("/instagram/upload/<account_id>/video", methods=["POST"])
 def video(account_id):
@@ -230,27 +254,43 @@ def video(account_id):
     if Token_expiry.tzinfo is None:
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        access_token = refresh_token(user_id, access_token)  
+        access_token = refresh_token(user_id, access_token)
     media_url = request.args.get("media_url")
-    cover_url = request.args.get("cover_url")
+    cover_url = request.args.get("cover_url")  # optional now, only valid for reels
     media_size = request.args.get("media_size")
     publish = request.args.get("publish")
-    caption = request.args.get("caption")
+    caption = request.args.get("caption", "")
     as_reeel = request.args.get("as_reel")
     height = request.args.get("height")
     width = request.args.get("width")
     duration = request.args.get("duration")
-    if not media_url or not media_size or not cover_url:
-        return jsonify({"error": "url and media size and cover_url is required"}), 400
-    if not _validate_int("media_size", media_size) or not _validate_int("duration", duration) or not _validate_int("width", width) or not _validate_int("height", height) :
-        return jsonify({"success": False, "message": "Unable to post story. due to media size / duration / width / heigth is not int"}), 500
+    if not media_url or not media_size:
+        return jsonify({"error": "url and media size is required"}), 400
+    media_size = _coerce_int("media_size", media_size)
+    duration = _coerce_int("duration", duration)
+    width = _coerce_int("width", width)
+    height = _coerce_int("height", height)
+    if None in (media_size, duration, width, height):
+        return jsonify({"success": False, "message": "Unable to post video. due to media size / duration / width / height is not int"}), 400
+    try:
+        _validate_int("media_size", media_size)
+        _validate_int("duration", duration)
+        _validate_int("width", width)
+        _validate_int("height", height)
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)}), 400
     publish_now = str(publish).strip().lower() == "true"
     as_reeel = str(as_reeel).strip().lower() == "true"
-    id_post = uploadd.post_video(access_token= access_token, ig_user_id= account_id,video_url=media_url, media_size= media_size , caption= caption , publish= publish_now, cover_url=cover_url , as_reel= as_reeel, media_duration=duration , width= width , height= height)
+    if cover_url and not as_reeel:
+        return jsonify({"success": False, "message": "cover_url is only supported when as_reel is true"}), 400
+    try:
+        id_post = uploadd.post_video( access_token=access_token, ig_user_id=account_id, video_url=media_url, media_size=media_size, caption=caption, publish=publish_now, cover_url=cover_url if as_reeel else None, as_reel=as_reeel, media_duration=duration, width=width, height=height,)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Unable to post video: {e}"}), 500
     if id_post:
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
-        return jsonify({"success": False, "message": "Unable to post story."}), 500    
+        return jsonify({"success": False, "message": "Unable to post video."}), 500
     
 if __name__ == "__main__":
     app.run(port=5000, debug=True)

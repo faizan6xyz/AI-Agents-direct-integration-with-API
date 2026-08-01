@@ -134,7 +134,6 @@ def post_photo(access_token: str, ig_user_id: str, image_url: str, caption: str 
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
 
-
 def post_video(access_token: str, ig_user_id: str, height: int, width: int, video_url: str, media_size: int, caption: str = "", as_reel: bool = True, cover_url: str = None,publish: bool = True, media_duration: int = 0, ) -> str:
     _validate_media_url(video_url)
     if cover_url is not None:
@@ -165,7 +164,6 @@ def post_video(access_token: str, ig_user_id: str, height: int, width: int, vide
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
  
-
 def post_carousel( access_token: str, ig_user_id: str, media_size: list, media_duration: list, media_urls: list, is_video: list, caption: str = "", publish: bool = True, ) -> str:
     if len(media_urls) != len(is_video):
         raise ValueError("media_urls and is_video must be the same length")
