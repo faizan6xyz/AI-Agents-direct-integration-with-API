@@ -1,0 +1,1 @@
+add the userid form auth.user too all the tbale 

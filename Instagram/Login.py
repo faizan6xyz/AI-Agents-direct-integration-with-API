@@ -24,6 +24,10 @@ def check_user_id(uuser_id):
         return False
     return True
 
+def _validate_int(name: str, value) -> None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return False
+    
 def refresh_token(user_id, access_token):
     resp = requests.get("https://graph.instagram.com/refresh_access_token",params={"grant_type": "ig_refresh_token", "access_token": access_token},).json()
     new_token = resp.get("access_token")
@@ -156,21 +160,97 @@ def story(account_id):
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(user_id, access_token)
     media_url = request.args.get("media_url")
-    is_video = request.args.get("is_video")  # fixed: args (not arg), is_video (not is_vedio)
-    if not media_url:
-        return jsonify({"error": "url is required"}), 400
-    video_type = str(is_video).strip().lower() == "true"
-    id_post = uploadd.post_story(access_token, account_id, media_url, video_type)
+    is_video = request.args.get("is_video") 
+    media_size = request.args.get("media_size")
+    publish = request.args.get("publish")
+    duration = request.args.get("duration")
+    if not media_url or not media_size :
+        return jsonify({"error": "url and media size is required"}), 400
+    if not _validate_int("media_size", media_size) or not _validate_int("duration", duration) :
+        return jsonify({"success": False, "message": "Unable to post story. due to duration  / media size int value"}), 500
+    video_type = str(is_video).strip().lower() == "true"  # if condition for isvideo gives true when statisfies
+    publish_now = str(publish).strip().lower() == "true"  # if condition for publish gives true when statisfies
+    id_post = uploadd.post_story(access_token= access_token, ig_user_id= account_id, media_size= media_size , media_url= media_url, publish= publish_now, is_video= video_type , media_duration= duration)
     if id_post:
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post story."}), 500
-    
-    
-    
-    
-    
-    
+
+
+@app.route("/instagram/upload/<account_id>/photo", methods=["POST"])
+def photo(account_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x:
+        return " Invalid user id "
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token)  
+    media_url = request.args.get("media_url")
+    media_size = request.args.get("media_size")
+    publish = request.args.get("publish")
+    caption = request.args.get("caption")
+    if not media_url or not media_size :
+        return jsonify({"error": "url and media size is required"}), 400
+    if not _validate_int("media_size", media_size)  :
+        return jsonify({"success": False, "message": "Unable to post story. due media szie int value"}), 500
+    publish_now = str(publish).strip().lower() == "true"
+    id_post = uploadd.post_photo(access_token=access_token, ig_user_id=account_id, image_url= media_url, caption=caption, media_size=media_size , publish=publish_now )
+    if id_post:
+        return jsonify({"success": True, "media_id": id_post}), 200
+    else:
+        return jsonify({"success": False, "message": "Unable to post story."}), 500
+
+
+@app.route("/instagram/upload/<account_id>/video", methods=["POST"])
+def video(account_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x:
+        return " Invalid user id "
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token)  
+    media_url = request.args.get("media_url")
+    cover_url = request.args.get("cover_url")
+    media_size = request.args.get("media_size")
+    publish = request.args.get("publish")
+    caption = request.args.get("caption")
+    as_reeel = request.args.get("as_reel")
+    height = request.args.get("height")
+    width = request.args.get("width")
+    duration = request.args.get("duration")
+    if not media_url or not media_size or not cover_url:
+        return jsonify({"error": "url and media size and cover_url is required"}), 400
+    if not _validate_int("media_size", media_size) or not _validate_int("duration", duration) or not _validate_int("width", width) or not _validate_int("height", height) :
+        return jsonify({"success": False, "message": "Unable to post story. due to media size / duration / width / heigth is not int"}), 500
+    publish_now = str(publish).strip().lower() == "true"
+    as_reeel = str(as_reeel).strip().lower() == "true"
+    id_post = uploadd.post_video(access_token= access_token, ig_user_id= account_id,video_url=media_url, media_size= media_size , caption= caption , publish= publish_now, cover_url=cover_url , as_reel= as_reeel, media_duration=duration , width= width , height= height)
+    if id_post:
+        return jsonify({"success": True, "media_id": id_post}), 200
+    else:
+        return jsonify({"success": False, "message": "Unable to post story."}), 500    
     
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
