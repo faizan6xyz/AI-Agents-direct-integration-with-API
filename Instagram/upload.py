@@ -247,7 +247,7 @@ def get_media_insights(media_id, access_token):
                 result[name] = values[0].get("value")
     except (KeyError, IndexError, TypeError) as e:
         return {"success": False, "data": None, "error": f"unexpected response shape for {media_id}: {e}"}
-    return result
+    return {"success": True, "data": result, "error": None}
 
 
 '''

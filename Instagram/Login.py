@@ -339,7 +339,7 @@ def carousel(account_id):
         return jsonify({"success": False, "message": "Unable to post carousel."}), 500
     
 @app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
-def carousel(account_id , media_id):
+def carousel(account_id, media_id):
     user_id = request.args.get("user_id")
     x = check_user_id(user_id)
     if not x:
@@ -357,16 +357,14 @@ def carousel(account_id , media_id):
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(user_id, access_token)
-    try :
-        data = uploadd.get_media_insights(access_token=access_token , media_id=media_id )
+    try:
+        result = uploadd.get_media_insights(access_token=access_token, media_id=media_id)
     except Exception as e:
-        return jsonify({"success": False, "message": f"Unable to fetch insight {e}"}), 500
-    if data :
-        return jsonify({"success": True , "data" : data})
-    else :
-        return jsonify({"success": False, "message": f"Unable to fetch insight {e}"}), 500
-
-    
+        return jsonify({"success": False, "message": f"Unable to fetch insight: {e}"}), 500
+    if result["success"]:
+        return jsonify({"success": True, "data": result["data"]}), 200
+    else:
+        return jsonify({"success": False, "message": result["error"]}), 500
     
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
