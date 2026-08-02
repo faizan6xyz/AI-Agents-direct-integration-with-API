@@ -7,7 +7,7 @@ import requests
 from urllib.parse import urlparse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ig_post")
-GRAPH_VERSION = "v22.0"
+GRAPH_VERSION = "v25.0"
 BASE_URL = f"https://graph.facebook.com/{GRAPH_VERSION}"
 MAX_REEL_SECONDS = 15 * 60      # 15 min
 MAX_STORY_SECONDS = 60          # 60 sec
@@ -167,7 +167,7 @@ def post_video(access_token: str, ig_user_id: str, height: int, width: int, vide
 def post_carousel( access_token: str, ig_user_id: str,   media_size: list[int], media_duration: list[int], media_urls: list[str], is_video: list[bool], caption: str = "", publish: bool = True, ) -> str:
     if len(media_urls) != len(is_video):
         raise ValueError("media_urls and is_video must be the same length")
-    if not (2 <= len(media_urls) <= 10):
+    if not (2 <= len(media_urls) <= 5):
         raise ValueError("Carousels need 2-10 items")
     caption = _check_caption(caption)
     for url, vid, siz, dura in zip(media_urls, is_video, media_size, media_duration):
@@ -227,10 +227,10 @@ def get_media_insights(media_id, access_token):
     metrics=("views", "reach", "likes", "comments", "saved", "shares")
     if not access_token:
         return {"success": False, "data": None, "error": f"missing access_token for {media_id}"}
-    url = f"https://graph.facebook.com/v22.0/{media_id}/insights"
+    url = f"{BASE_URL}/{media_id}/insights"
     params = {"metric": ",".join(metrics), "access_token": access_token}
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=5)
         payload = response.json()
     except requests.RequestException as e:
         return {"success": False, "data": None, "error": f"request failed for {media_id}: {e}"}
@@ -255,10 +255,10 @@ def reply_to_comment(comment_id, message, access_token):
         return {"success": False, "data": None, "error": f"missing access_token for {comment_id}"}
     if not message:
         return {"success": False, "data": None, "error": f"missing message for {comment_id}"}
-    url = f"https://graph.facebook.com/v22.0/{comment_id}/replies"
+    url = f"{BASE_URL}/{comment_id}/replies"
     params = {"message": message, "access_token": access_token}
     try:
-        response = requests.post(url, params=params, timeout=10)
+        response = requests.post(url, params=params, timeout=5)
         payload = response.json()
     except requests.RequestException as e:
         return {"success": False, "data": None, "error": f"request failed for {comment_id}: {e}"}
@@ -271,52 +271,65 @@ def reply_to_comment(comment_id, message, access_token):
         return {"success": False, "data": None, "error": f"unexpected response shape for {comment_id}: {payload}"}
     return {"success": True, "data": {"id": reply_id}, "error": None}
 
-'''
-if __name__ == "__main__":
-    ACCESS_TOKEN = "..."
-    IG_USER_ID = "..."
+def send_message(recipient_id, message, access_token):
+    if not access_token:
+        return {"success": False, "data": None, "error": f"missing access_token for {recipient_id}"}
+    if not message:
+        return {"success": False, "data": None, "error": f"missing message for {recipient_id}"}
+    url = f"{BASE_URL}/me/messages"
+    params = {"access_token": access_token}
+    body = {"recipient": {"id": recipient_id},"message": {"text": message}}
+    try:
+        response = requests.post(url, params=params, json=body, timeout=5)
+        payload = response.json()
+    except requests.RequestException as e:
+        return {"success": False, "data": None, "error": f"request failed for {recipient_id}: {e}"}
+    except ValueError as e:
+        return {"success": False, "data": None, "error": f"response was not valid JSON for {recipient_id}: {e}"}
+    if "error" in payload:
+        return {"success": False, "data": None, "error": f"API error for {recipient_id}: {payload['error']}"}
+    message_id = payload.get("message_id")
+    recipient = payload.get("recipient_id")
+    if not message_id:
+        return {"success": False, "data": None, "error": f"unexpected response shape for {recipient_id}: {payload}"}
+    return {"success": True, "data": {"message_id": message_id, "recipient_id": recipient}, "error": None}
 
-    # Example: single photo
-    media_id = post_photo(
-        ACCESS_TOKEN, IG_USER_ID,
-        image_url="https://example.com/photo.jpg",
-        caption="Posted via API #test",
-    )
-    print(f"Published media id: {media_id}")
+def get_follower_count(account_id, access_token):
+    if not access_token:
+        return {"success": False, "data": None, "error": f"missing access_token for {account_id}"}
+    url = f"{BASE_URL}/{account_id}"
+    params = {"fields": "followers_count", "access_token": access_token}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        payload = response.json()
+    except requests.RequestException as e:
+        return {"success": False, "data": None, "error": f"request failed for {account_id}: {e}"}
+    except ValueError as e:
+        return {"success": False, "data": None, "error": f"response was not valid JSON for {account_id}: {e}"}
+    if "error" in payload:
+        return {"success": False, "data": None, "error": f"API error for {account_id}: {payload['error']}"}
+    followers_count = payload.get("followers_count")
+    if followers_count is None:
+        return {"success": False, "data": None, "error": f"unexpected response shape for {account_id}: {payload}"}
+    return {"success": True, "data": {"followers_count": followers_count}, "error": None}
 
-    # Example: photo with a user tag
-    post_photo(
-        ACCESS_TOKEN, IG_USER_ID,
-        image_url="https://example.com/photo.jpg",
-        caption="At the beach!",
-        user_tags=[{"username": "some_user", "x": 0.5, "y": 0.5}],
-    )
-
-    # Example: mixed carousel
-    post_carousel(
-        ACCESS_TOKEN, IG_USER_ID,
-        media_size=[500_000, 2_000_000],
-        media_duration=[0, 30],
-        media_urls=["https://example.com/pic1.jpg", "https://example.com/clip1.mp4"],
-        is_video=[False, True],
-        caption="Mixed carousel!",
-    )
-
-    # Example: story
-    post_story(
-        ACCESS_TOKEN, IG_USER_ID,
-        media_size=1_000_000,
-        media_url="https://example.com/story_clip.mp4",
-        is_video=True,
-        media_duration=10,
-    )
-
-    # Example: schedule now, publish later
-    container_id = post_photo(
-        ACCESS_TOKEN, IG_USER_ID,
-        image_url="https://example.com/photo.jpg",
-        publish=False,
-    )
-    # ... later ...
-    publish_container(ACCESS_TOKEN, IG_USER_ID, container_id)
-'''
+def check_account_follows_status(your_ig_user_id, target_username, access_token):
+    if not access_token:
+        return {"success": False, "data": None, "error": f"missing access_token for {target_username}"}
+    if not target_username:
+        return {"success": False, "data": None, "error": "missing target_username"}
+    url = f"{BASE_URL}/{your_ig_user_id}"
+    params = {"fields": f"business_discovery.username({target_username}){{id,username,followers_count,media_count}}", "access_token": access_token}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        payload = response.json()
+    except requests.RequestException as e:
+        return {"success": False, "data": None, "error": f"request failed for {target_username}: {e}"}
+    except ValueError as e:
+        return {"success": False, "data": None, "error": f"response was not valid JSON for {target_username}: {e}"}
+    if "error" in payload:
+        return {"success": False, "data": None, "error": f"API error for {target_username}: {payload['error']}"}
+    discovery = payload.get("business_discovery")
+    if not discovery:
+        return {"success": False, "data": None, "error": f"no business_discovery data for {target_username}"}
+    return {"success": True, "data": discovery, "error": None}

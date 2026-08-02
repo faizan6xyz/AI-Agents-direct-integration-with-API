@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from flask import Flask, request, redirect, jsonify
 from supabase import create_client, Client
 from datetime import datetime, timezone, timedelta
+import time 
 import Instagram.upload as uploadd
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -366,8 +367,8 @@ def insight(account_id, media_id):
     else:
         return jsonify({"success": False, "message": result["error"]}), 500
     
-@app.route("/instagram/comment/<account_id>/<comment_id>/reply", methods=["POST"])
-def replycomment(account_id, comment_id):
+@app.route("/instagram/comments/reply/batch/<account_id>", methods=["POST"])
+def reply_to_comments_batch(account_id):
     user_id = request.args.get("user_id")
     x = check_user_id(user_id)
     if not x:
@@ -386,17 +387,53 @@ def replycomment(account_id, comment_id):
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(user_id, access_token)
     data = request.get_json(silent=True) or {}
-    message = data.get("reply") or request.form.get("reply") or request.args.get("reply")
-    if not message:
-        return jsonify({"success": False, "message": "missing reply message"}), 400
-    try:
-        result = uploadd.reply_to_comment(access_token=access_token, comment_id=comment_id, message=message)
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Unable to post reply: {e}"}), 500
-    if result["success"]:
-        return jsonify({"success": True, "data": result["data"]}), 200
-    else:
-        return jsonify({"success": False, "message": result["error"]}), 500
+    replies = data.get("replies")  # expects [{"comment_id": "...", "message": "..."}, ...]
+    if not replies or not isinstance(replies, list):
+        return jsonify({"success": False, "message": "expected a non-empty 'replies' list"}), 400
+    results = []
+    for item in replies:
+        comment_id = item.get("comment_id")
+        message = item.get("message")
+        if not comment_id or not message:
+            results.append({"comment_id": comment_id, "success": False, "error": "missing comment_id or message"})
+            continue
+        try:
+            r = uploadd.reply_to_comment(access_token=access_token, comment_id=comment_id, message=message)
+        except Exception as e:
+            r = {"success": False, "data": None, "error": str(e)}
+        results.append({"comment_id": comment_id, "success": r["success"], "data": r.get("data"), "error": r.get("error")})
+        time.sleep(0.2)
+    overall_success = all(r["success"] for r in results)
+    return jsonify({"success": overall_success, "results": results}), 200
+
+@app.route("/instagram/send-message/<account_id>", methods=["POST"])
+def send_instagram_message(account_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x:
+        return jsonify({"error": "invalid user id"}), 400
+    body = request.get_json(silent=True) or {}
+    recipient_id = body.get("recipient_id")
+    message = body.get("message")
+    if not recipient_id or not message:
+        return jsonify({"error": "recipient_id and message are required"}), 400
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token)
+    result = uploadd.send_message(recipient_id, message, access_token)
+    if not result["success"]:
+        return jsonify(result), 400
+    return jsonify(result), 200
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
