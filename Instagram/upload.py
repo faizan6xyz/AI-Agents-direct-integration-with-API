@@ -250,6 +250,27 @@ def get_media_insights(media_id, access_token):
     return {"success": True, "data": result, "error": None}
 
 
+def reply_to_comment(comment_id, message, access_token):
+    if not access_token:
+        return {"success": False, "data": None, "error": f"missing access_token for {comment_id}"}
+    if not message:
+        return {"success": False, "data": None, "error": f"missing message for {comment_id}"}
+    url = f"https://graph.facebook.com/v22.0/{comment_id}/replies"
+    params = {"message": message, "access_token": access_token}
+    try:
+        response = requests.post(url, params=params, timeout=10)
+        payload = response.json()
+    except requests.RequestException as e:
+        return {"success": False, "data": None, "error": f"request failed for {comment_id}: {e}"}
+    except ValueError as e:
+        return {"success": False, "data": None, "error": f"response was not valid JSON for {comment_id}: {e}"}
+    if "error" in payload:
+        return {"success": False, "data": None, "error": f"API error for {comment_id}: {payload['error']}"}
+    reply_id = payload.get("id")
+    if not reply_id:
+        return {"success": False, "data": None, "error": f"unexpected response shape for {comment_id}: {payload}"}
+    return {"success": True, "data": {"id": reply_id}, "error": None}
+
 '''
 if __name__ == "__main__":
     ACCESS_TOKEN = "..."

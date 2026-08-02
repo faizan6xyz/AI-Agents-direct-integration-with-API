@@ -339,7 +339,7 @@ def carousel(account_id):
         return jsonify({"success": False, "message": "Unable to post carousel."}), 500
     
 @app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
-def carousel(account_id, media_id):
+def insight(account_id, media_id):
     user_id = request.args.get("user_id")
     x = check_user_id(user_id)
     if not x:
@@ -366,5 +366,37 @@ def carousel(account_id, media_id):
     else:
         return jsonify({"success": False, "message": result["error"]}), 500
     
+@app.route("/instagram/comment/<account_id>/<comment_id>/reply", methods=["POST"])
+def replycomment(account_id, comment_id):
+    user_id = request.args.get("user_id")
+    x = check_user_id(user_id)
+    if not x:
+        return " Invalid user id "
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token)
+    data = request.get_json(silent=True) or {}
+    message = data.get("reply") or request.form.get("reply") or request.args.get("reply")
+    if not message:
+        return jsonify({"success": False, "message": "missing reply message"}), 400
+    try:
+        result = uploadd.reply_to_comment(access_token=access_token, comment_id=comment_id, message=message)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Unable to post reply: {e}"}), 500
+    if result["success"]:
+        return jsonify({"success": True, "data": result["data"]}), 200
+    else:
+        return jsonify({"success": False, "message": result["error"]}), 500
+
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
