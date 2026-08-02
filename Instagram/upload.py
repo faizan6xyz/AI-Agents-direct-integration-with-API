@@ -313,23 +313,3 @@ def get_follower_count(account_id, access_token):
         return {"success": False, "data": None, "error": f"unexpected response shape for {account_id}: {payload}"}
     return {"success": True, "data": {"followers_count": followers_count}, "error": None}
 
-def check_account_follows_status(your_ig_user_id, target_username, access_token):
-    if not access_token:
-        return {"success": False, "data": None, "error": f"missing access_token for {target_username}"}
-    if not target_username:
-        return {"success": False, "data": None, "error": "missing target_username"}
-    url = f"{BASE_URL}/{your_ig_user_id}"
-    params = {"fields": f"business_discovery.username({target_username}){{id,username,followers_count,media_count}}", "access_token": access_token}
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        payload = response.json()
-    except requests.RequestException as e:
-        return {"success": False, "data": None, "error": f"request failed for {target_username}: {e}"}
-    except ValueError as e:
-        return {"success": False, "data": None, "error": f"response was not valid JSON for {target_username}: {e}"}
-    if "error" in payload:
-        return {"success": False, "data": None, "error": f"API error for {target_username}: {payload['error']}"}
-    discovery = payload.get("business_discovery")
-    if not discovery:
-        return {"success": False, "data": None, "error": f"no business_discovery data for {target_username}"}
-    return {"success": True, "data": discovery, "error": None}
