@@ -44,11 +44,6 @@ def subscribe_page_to_webhooks(page_id, page_access_token):
     resp = requests.post(url, params={"subscribed_fields": "comments","access_token": page_access_token})
     return resp.json()
 
-def reply_to_comment(comment_id, message, access_token):
-    url = f"https://graph.facebook.com/v21.0/{comment_id}/replies"
-    resp = requests.post(url, params={"message": message,"access_token": access_token})
-    return resp.json()
-
 app = Flask(__name__)
 app.register_blueprint(instagram_bp)
 

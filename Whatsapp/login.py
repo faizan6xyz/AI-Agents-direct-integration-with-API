@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from flask import Flask, request, redirect, jsonify
 from supabase import create_client, Client
 from datetime import datetime, timezone, timedelta
+import Whatsapp.new as wtpp
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 app = Flask(__name__)
