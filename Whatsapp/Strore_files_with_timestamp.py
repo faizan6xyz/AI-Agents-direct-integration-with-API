@@ -133,10 +133,8 @@ def verify_webhook():
     log.warning("Webhook verification attempt failed (bad verify token).")
     return "Verification failed", 403
 
-
 @app.route("/webhook", methods=["POST"])
 def receive_webhook():
-    # --- Security gate: reject anything not genuinely signed by Meta ---
     if not is_valid_signature(request):
         log.error("Rejected webhook POST: invalid or missing signature.")
         return jsonify({"status": "invalid signature"}), 403
@@ -144,16 +142,12 @@ def receive_webhook():
     if not data:
         log.warning("Received webhook POST with no/invalid JSON body.")
         return jsonify({"status": "ignored"}), 200
-
     try:
         value = data["entry"][0]["changes"][0]["value"]
     except (KeyError, IndexError, TypeError) as e:
         log.warning(f"Unexpected payload shape: {e}")
         return jsonify({"status": "ignored"}), 200
-
     for msg in value.get("messages", []):
-        # Isolate failures per-message so one bad/oversized file doesn't
-        # stop the rest of the batch from being processed.
         try:
             process_message(msg)
         except FileTooLargeError as e:

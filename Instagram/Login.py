@@ -45,7 +45,7 @@ def instagram_login():
     user_id = request.args.get("user_id")   # takes user_id from http://localhost:5000/auth/instagram/login?user_id=<some_id>
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
-    params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code"}
+    params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code" ,  "state": user_id,}
     auth_url = "https://www.instagram.com/oauth/authorize?" + urlencode(params)
     return redirect(auth_url)
 
