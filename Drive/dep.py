@@ -23,7 +23,7 @@ fernet = Fernet(os.environ["FERNET_KEY"].encode())
 serializer = URLSafeSerializer(app.secret_key)
 table_name = "Drive" 
 PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
-SUBFOLDERS = ["photos", "videos", "pdf", "documents"]
+SUBFOLDERS = ["photos", "videos", "pdf", "documents", "analytics" ]
 
 def save_tokens(user_id, access_token, refresh_token, expiry):
     dbimp.insert_rows(table_name, {"id" : user_id , "Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token" : fernet.encrypt(refresh_token.encode()) , "Token_expire": fernet.encrypt(expiry.isoformat().encode()), "Connected" : 1 , "Scopes" : SCOPES})
@@ -98,6 +98,7 @@ def get_or_create_folder(service, folder_name, parent_id=None):
 
 def create_platform_folder_structure(service):
     structure = {}
+    get_or_create_folder(service,"marketing_due") # to store the info about the sending people
     for platform in PLATFORM_FOLDERS:
         platform_id, platform_created = get_or_create_folder(service, platform)
         structure[platform] = {"_id": platform_id, "_created": platform_created}
