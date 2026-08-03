@@ -458,8 +458,7 @@ def get_followers_count_route(account_id):
         return jsonify({"error": result["error"]}), 400
     return jsonify(result["data"])
 
-@app.route("/instagram/followers/<account_id>")
-def webhook():
-    print("configure the webhook")
+# add a route to for the facebook page_id extraction  
+
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
