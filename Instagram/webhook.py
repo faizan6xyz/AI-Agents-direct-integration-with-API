@@ -47,7 +47,7 @@ def handle_comment_event(account_id, value):
     media_id = value.get("media", {}).get("id")
     return {"account_id": account_id, "comment_id": comment_id, "from_user_id": from_user_id, "from_username": from_username,  "media_id": media_id,}
 
-def subscribe_page_to_webhooks(page_id, page_access_token):
+def subscribe_page_to_webhooks(page_id, page_access_token): # run it once for the subscription
     url = f"https://graph.facebook.com/v25.0/{page_id}/subscribed_apps"   # webhook require facebook api and link the facebook account with it 
     resp = requests.post( url,params={"subscribed_fields": "comments", "access_token": page_access_token},)
     return resp.json()
