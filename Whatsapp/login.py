@@ -84,7 +84,7 @@ def whatsapp_callback():
             phone_number_id = numbers[0].get("id")
             display_number = numbers[0].get("display_phone_number")
     try:
-        dbimp.update_rows(TABLE_NAME, {"Access_token": long_token, "Timestamp": datetime.now(timezone.utc).isoformat(), "Token_expire": expire_time.isoformat(), "WABA_id": waba_id,"Phone_number_id": phone_number_id, "Display_number": display_number, }, filters={"id": user_id}, )
+        dbimp.update_rows(TABLE_NAME, {"Access_token": long_token, "Timestamp": datetime.now(timezone.utc).isoformat(), "Token_expire": expire_time.isoformat(), "Bussiness_id": waba_id,"Account_id": phone_number_id, "Phone_no": display_number, }, filters={"id": user_id}, )
     except Exception as e:
         return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
     return jsonify({"user_id": user_id, "waba_id": waba_id, "phone_number_id": phone_number_id, "access_token": long_token,})

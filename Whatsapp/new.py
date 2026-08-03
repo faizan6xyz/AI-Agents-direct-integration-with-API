@@ -11,9 +11,25 @@ from collections import defaultdict, deque
 import requests
 from flask import Flask, request, jsonify
 from openpyxl import Workbook, load_workbook
-PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")  # env
+import database.UserDB as dbimp
+import os
+import requests
+from urllib.parse import urlencode
+from flask import Flask, request, redirect, jsonify
+from supabase import create_client, Client
+from datetime import datetime, timezone, timedelta
+import Whatsapp.new as wtpp
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+WA_APP_ID = os.getenv("WA_APP_ID")
+WA_REDIRECT_URI = os.getenv("WA_REDIRECT_URI")
+GRAPH_VERSION = ("v20.0")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+TABLE_NAME = "WhatsApp"
+SCOPE = "whatsapp_business_management,whatsapp_business_messaging,business_management"
+
 SEND_API_KEY = os.environ.get("WHATSAPP_SEND_API_KEY")        # env
-VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN")        # env
+VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN")        # good
 APP_SECRET = os.environ.get("WHATSAPP_APP_SECRET")            # env
 GRAPH_URL = "https://graph.facebook.com/v19.0"
 REQUEST_TIMEOUT = 15
@@ -43,8 +59,8 @@ _request_log = defaultdict(deque)
 file_lock = threading.Lock()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("whatsapp_integration")
-if not all([ PHONE_NUMBER_ID, VERIFY_TOKEN, APP_SECRET]):
-    log.warning("One or more required environment variables are missing " "(, WHATSAPP_PHONE_NUMBER_ID, " "WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET). ""The webhook will not work correctly until these are set." )
+if not all([ WA_APP_ID , VERIFY_TOKEN, APP_SECRET]):
+    log.warning("env mission" )
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 
@@ -140,7 +156,7 @@ def require_api_key():
         return jsonify({"error": "Unauthorized"}), 401
     return None
 
-def send_whatsapp_message( ACCESS_TOKEN , recipient_number: str, message_body: str) -> dict:
+def send_whatsapp_message(PHONE_NUMBER_ID ,ACCESS_TOKEN , recipient_number: str, message_body: str) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     message_body = validate_text_body(message_body)
     payload = { "messaging_product": "whatsapp", "recipient_type": "individual", "to": recipient_number, "type": "text", "text": {"body": message_body}, }
@@ -148,7 +164,7 @@ def send_whatsapp_message( ACCESS_TOKEN , recipient_number: str, message_body: s
     resp = request_with_retry("POST", url, headers={ "Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json", }, json=payload)
     return resp.json()
 
-def send_whatsapp_media(  ACCESS_TOKEN , recipient_number: str, msg_type: str, link: str, caption: str = None, filename: str = None,) -> dict:
+def send_whatsapp_media( PHONE_NUMBER_ID , ACCESS_TOKEN , recipient_number: str, msg_type: str, link: str, caption: str = None, filename: str = None,) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     if msg_type not in VALID_MEDIA_TYPES:
         raise ValueError(f"msg_type must be one of {VALID_MEDIA_TYPES}, got '{msg_type}'")
@@ -165,7 +181,7 @@ def send_whatsapp_media(  ACCESS_TOKEN , recipient_number: str, msg_type: str, l
     resp = request_with_retry("POST", url, headers={ "Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json", }, json=payload)
     return resp.json()
 
-def send_whatsapp_location( ACCESS_TOKEN , recipient_number: str, latitude: float, longitude: float, name: str = None, address: str = None ) -> dict:
+def send_whatsapp_location(PHONE_NUMBER_ID , ACCESS_TOKEN , recipient_number: str, latitude: float, longitude: float, name: str = None, address: str = None ) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     try:
         lat = float(latitude)
@@ -184,7 +200,7 @@ def send_whatsapp_location( ACCESS_TOKEN , recipient_number: str, latitude: floa
     resp = request_with_retry("POST", url, headers={ "Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json", }, json=payload)
     return resp.json()
 
-def send_whatsapp_reply_buttons( ACCESS_TOKEN , recipient_number: str, body_text: str, buttons: list) -> dict:
+def send_whatsapp_reply_buttons(PHONE_NUMBER_ID , ACCESS_TOKEN , recipient_number: str, body_text: str, buttons: list) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     body_text = validate_text_body(body_text)
     if not buttons or len(buttons) > MAX_BUTTONS:
@@ -209,7 +225,7 @@ def send_whatsapp_reply_buttons( ACCESS_TOKEN , recipient_number: str, body_text
     resp = request_with_retry("POST", url, headers={ "Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json", }, json=payload)
     return resp.json()
 
-def send_whatsapp_list(ACCESS_TOKEN , recipient_number: str, body_text: str, button_text: str, sections: list) -> dict:
+def send_whatsapp_list(PHONE_NUMBER_ID , ACCESS_TOKEN , recipient_number: str, body_text: str, button_text: str, sections: list) -> dict:
     recipient_number = validate_phone_number(recipient_number)
     body_text = validate_text_body(body_text)
     if not button_text or len(button_text) > MAX_LIST_BUTTON_TEXT_LEN:
@@ -287,7 +303,7 @@ def log_message(timestamp: str, sender: str, message: str):
         except Exception as e:
             log.error(f"Failed to write Excel row: {e}")
 
-def is_valid_phone_number_id(value: dict) -> bool:
+def is_valid_phone_number_id(PHONE_NUMBER_ID ,value: dict) -> bool:
     if not PHONE_NUMBER_ID:
         return True
     incoming_id = value.get("metadata", {}).get("phone_number_id")
@@ -314,6 +330,80 @@ def process_single_message(msg: dict):
     log.info(f"New message from {sanitize_sender(sender)}")
     log_message(timestamp, sender, message_text)
 
+
+def check_user_id(uuser_id):
+    exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": uuser_id})
+    if not exist:
+        return False
+    return True
+
+def refresh_token(user_id, access_token):
+    resp = requests.get(
+        f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token",
+        params={ "grant_type": "fb_exchange_token", "client_id": WA_APP_ID, "client_secret": APP_SECRET, "fb_exchange_token": access_token, },).json()
+    new_token = resp.get("access_token")
+    seconds = resp.get("expires_in")
+    if new_token and seconds:
+        new_expire = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        dbimp.update_rows( TABLE_NAME, {"Access_token": new_token, "Token_expire": new_expire.isoformat()}, filters={"id": user_id}, )
+        return new_token
+    return access_token
+
+@app.route("/auth/whatsapp/login")
+def whatsapp_login():
+    user_id = request.args.get("user_id")  # http://localhost:5000/auth/whatsapp/login?user_id=<some_id>
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+    params = { "client_id": WA_APP_ID, "redirect_uri": WA_REDIRECT_URI, "scope": SCOPE, "response_type": "code", "state": user_id,}
+    auth_url = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?" + urlencode(params)
+    return redirect(auth_url)
+
+
+@app.route("/auth/whatsapp/callback")
+def whatsapp_callback():
+    code = request.args.get("code")
+    user_id = request.args.get("state")
+    if not code:
+        return jsonify({"error": "missing code"}), 400
+    if not user_id:
+        return jsonify({"error": "missing user id"}), 400
+    if not check_user_id(user_id):
+        return jsonify({"error": "invalid user id"}), 400
+    token_resp = requests.get(
+        f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token",
+        params={ "client_id": WA_APP_ID, "client_secret": APP_SECRET, "redirect_uri": WA_REDIRECT_URI, "code": code, },).json()
+    short_token = token_resp.get("access_token")
+    if not short_token:
+        return jsonify({"error": "token exchange failed", "details": token_resp}), 400
+    long_resp = requests.get(
+        f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token",
+        params={ "grant_type": "fb_exchange_token", "client_id": WA_APP_ID, "client_secret": APP_SECRET, "fb_exchange_token": short_token, },).json()
+    long_token = long_resp.get("access_token")
+    seconds = long_resp.get("expires_in")
+    if not long_token or not seconds:
+        return jsonify({"error": "token exchange failed", "details": long_resp}), 400
+    expire_time = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    debug = requests.get(f"https://graph.facebook.com/{GRAPH_VERSION}/debug_token", params={"input_token": long_token, "access_token": f"{WA_APP_ID}|{APP_SECRET}"},).json()
+    granular_scopes = debug.get("data", {}).get("granular_scopes", [])
+    waba_ids = []
+    for scope in granular_scopes:
+        if scope.get("scope") == "whatsapp_business_management":
+            waba_ids.extend(scope.get("target_ids", []))
+    waba_id = waba_ids[0] if waba_ids else None
+    phone_number_id = None
+    display_number = None
+    if waba_id:
+        phones = requests.get( f"https://graph.facebook.com/{GRAPH_VERSION}/{waba_id}/phone_numbers", params={"access_token": long_token}, ).json()
+        numbers = phones.get("data", [])
+        if numbers:
+            phone_number_id = numbers[0].get("id")
+            display_number = numbers[0].get("display_phone_number")
+    try:
+        dbimp.update_rows(TABLE_NAME, {"Access_token": long_token, "Timestamp": datetime.now(timezone.utc).isoformat(), "Token_expire": expire_time.isoformat(), "Bussiness_id": waba_id,"Account_id": phone_number_id, "Phone_no": display_number, }, filters={"id": user_id}, )
+    except Exception as e:
+        return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
+    return jsonify({"user_id": user_id, "waba_id": waba_id, "phone_number_id": phone_number_id, "access_token": long_token,})
+
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
@@ -336,7 +426,7 @@ def receive_webhook_message():
             changes = entry.get("changes", [])
             for change in changes:
                 value = change.get("value", {})
-                if not is_valid_phone_number_id(value):
+                if not is_valid_phone_number_id(value=value):
                     continue
                 messages = value.get("messages", [])
                 for msg in messages:
@@ -350,7 +440,22 @@ def receive_webhook_message():
 
 @app.route("/send-test", methods=["POST"])
 def test_send():
-    ACCESS_TOKEN = request.args.get("access_token")
+    user_id = request.args.get("user_id")
+    account_id = request.args.get("account_id")
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    if not rows:
+        return jsonify({"error": "no instagram account linked"}), 404
+    row = rows[0]
+    access_token = row["Access_token"]
+    Token_expiry = row["Token_expire"]
+    if not access_token or not Token_expiry:
+        return jsonify({"error": "missing access_token"}), 400
+    Token_expiry = datetime.fromisoformat(Token_expiry)
+    if Token_expiry.tzinfo is None:
+        Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
+    if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
+        access_token = refresh_token(user_id, access_token)
+    phoneno = int(request.args.get("phone_number"))
     auth_error = require_api_key()
     if auth_error:
         return auth_error
@@ -363,23 +468,23 @@ def test_send():
         if msg_type == "text":
             if "msg" not in data:
                 return jsonify({"error": "'msg' is required for type 'text'"}), 400
-            result = send_whatsapp_message(ACCESS_TOKEN , phone, data["msg"])
+            result = send_whatsapp_message(phoneno,access_token , phone, data["msg"])
         elif msg_type in VALID_MEDIA_TYPES:
             if "link" not in data:
                 return jsonify({"error": f"'link' is required for type '{msg_type}'"}), 400
-            result = send_whatsapp_media(ACCESS_TOKEN , phone, msg_type, link=data["link"], caption=data.get("caption"), filename=data.get("filename"), )
+            result = send_whatsapp_media(phoneno, access_token , phone, msg_type, link=data["link"], caption=data.get("caption"), filename=data.get("filename"), )
         elif msg_type == "location":
             if "latitude" not in data or "longitude" not in data:
                 return jsonify({"error": "'latitude' and 'longitude' are required"}), 400
-            result = send_whatsapp_location(ACCESS_TOKEN , phone, data["latitude"], data["longitude"], name=data.get("name"), address=data.get("address"), )
+            result = send_whatsapp_location(phoneno, access_token , phone, data["latitude"], data["longitude"], name=data.get("name"), address=data.get("address"), )
         elif msg_type == "button":
             if "body" not in data or "buttons" not in data:
                 return jsonify({"error": "'body' and 'buttons' are required"}), 400
-            result = send_whatsapp_reply_buttons(ACCESS_TOKEN , phone, data["body"], data["buttons"])
+            result = send_whatsapp_reply_buttons(phoneno, access_token , phone, data["body"], data["buttons"])
         elif msg_type == "list":
             if "body" not in data or "button_text" not in data or "sections" not in data:
                 return jsonify({"error": "'body', 'button_text', and 'sections' are required"}), 400
-            result = send_whatsapp_list(ACCESS_TOKEN , phone, data["body"], data["button_text"], data["sections"])
+            result = send_whatsapp_list( phoneno,access_token, phone, data["body"], data["button_text"], data["sections"])
         else:
             return jsonify({"error": f"Unsupported type '{msg_type}'"}), 400
         return jsonify({"status": "sent", "details": result}), 200
@@ -397,6 +502,7 @@ def test_send():
     except Exception as e:
         log.exception(f"Unexpected error in /send-test: {e}")
         return jsonify({"error": "Internal error"}), 500
+
 
 if __name__ == "__main__":
     ensure_csv_exists()
