@@ -31,7 +31,7 @@ def receive_webhook(account_id):
             for change in entry.get("changes", []):
                 if change.get("field") == "comments":
                     events.append(handle_comment_event(account_id, change["value"]))
-    return jsonify(info=events, status="EVENT_RECEIVED"), 200
+    return jsonify({"info" :events, "status" :"EVENT_RECEIVED"}), 200
 
 def verify_signature(req):
     signature = req.headers.get("X-Hub-Signature-256", "")

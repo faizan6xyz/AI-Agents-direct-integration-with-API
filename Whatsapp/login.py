@@ -92,7 +92,7 @@ def receive_webhook_message():
                         log.exception(f"Failed to process message {msg.get('id')}: {e}")
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
-    return jsonify({"status": "received"}), 200
+    return jsonify({"status": "received", "data" : data}), 200
 
 @app.route("/send-test", methods=["POST"])
 def test_send():

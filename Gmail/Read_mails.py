@@ -17,16 +17,10 @@ from supabase import create_client, Client
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-mail = os.environ.get("email")
-passw = os.environ.get("pass")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-TABLE_NAME = "users"
-try:
-    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
-except Exception:
-    res = supabase.auth.sign_up({"email": mail, "password": passw})
+TABLE_NAME = "Gmail"
 logging.basicConfig(level=logging.INFO)
 Clientid = os.environ.get("client_id")
 Clientsec = os.environ.get("client_secrect")
@@ -49,25 +43,24 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2
 RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503}
 ALLOWED_ATTACHMENT_EXTENSIONS = { '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.ppt', '.pptx', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.mp3', }
-def get_service():
+def get_service(user_id):
     if not os.path.exists(CLIENT_SECRET_PATH):
         raise FileNotFoundError(f"Client secret file not found at '{CLIENT_SECRET_PATH}'. Download it from Google Cloud Console and place it there.")
     if os.path.getsize(CLIENT_SECRET_PATH) == 0:
         raise ValueError(f"Client secret file at '{CLIENT_SECRET_PATH}' is empty.")
-    user_id = res.user.id
     with open(CLIENT_SECRET_PATH, 'r') as f:
         client_secrets = json.load(f)
-    rows = dbimp.select_rows("Gmail", select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})
     row = rows[0] if rows else None
     creds = None
     if row:
-        creds = Credentials(token=row["Access_token"], refresh_token=row["Refresh_token"],token_uri="https://oauth2.googleapis.com/token",client_id=client_secrets["installed"]["client_id"], client_secret=client_secrets["installed"]["client_secret"],scopes=SCOPES, )
+        creds = Credentials(token=row["Access_token"], refresh_token=row["Refresh_token"],token_uri="https://oauth2.googleapis.com/token",client_id=client_secrets["installed"]["client_id"], client_secret=client_secrets["installed"]["client_secret"],scopes=SCOPES,  )
         if row.get("Token_expire"):
             creds.expiry = datetime.fromisoformat(row["Token_expire"])
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            dbimp.update_rows( "Gmail",{"Access_token": creds.token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat()}, filters={"id": user_id},)
+            dbimp.update_rows( TABLE_NAME,{"Access_token": creds.token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat()}, filters={"id": user_id},)
         else:
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
@@ -75,9 +68,9 @@ def get_service():
             mail_add = service.users().getProfile(userId='me').execute()['emailAddress']
             payload = {"Access_token": creds.token, "Refresh_token": creds.refresh_token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat(),"Email": mail_add, }
             if row:
-                dbimp.update_rows("Gmail", payload, filters={"id": user_id})
+                dbimp.update_rows(TABLE_NAME, payload, filters={"id": user_id})
             else:
-                dbimp.insert_rows("Gmail", {"id": user_id, **payload})
+                dbimp.insert_rows(TABLE_NAME, {"id": user_id, **payload})
     if set(SCOPES) - set(getattr(creds, 'scopes', None) or SCOPES):
         logger.warning("Stored credentials may not cover all requested scopes.")
     return build('gmail', 'v1', credentials=creds)
