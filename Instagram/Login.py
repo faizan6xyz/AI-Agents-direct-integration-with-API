@@ -458,7 +458,5 @@ def get_followers_count_route(account_id):
         return jsonify({"error": result["error"]}), 400
     return jsonify(result["data"])
 
-# add a route to for the facebook page_id extraction  
-
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
