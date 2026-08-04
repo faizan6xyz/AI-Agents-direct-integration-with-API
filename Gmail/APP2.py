@@ -197,11 +197,12 @@ def create_filter():
     data = request.get_json(silent=True) or {}
     criteria = data.get('criteria')
     action = data.get('action')
+    criteria["from"] = criteria["from"].replace(",", " OR ") # google api use OR for checking multiple ones
     if not isinstance(criteria, dict) or not isinstance(action, dict):
         return jsonify({"error": "'criteria' and 'action' must be objects"}), 400
     try:
         service = gc.get_service(user_id=user_id)
-        result = gc.create_filter(service, criteria, action)
+        result = gc.create_filter(service, criteria, action) # this reutrn the filter_id which is the result["id"]
         return jsonify(result)
     except Exception as e:
         return safe_error(e)

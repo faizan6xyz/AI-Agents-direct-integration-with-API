@@ -3,3 +3,7 @@ i need to run file in ("py -m Instagram.Login") way because im not importing the
 
 user pass the login credentials for my app then it gets a user_id which he sends in every requests , it connects to services once the user access_token are stored in the DB being encrypted an used after decrypted 
 when the user wnats to use it , the user gets token and the token + other imp info are stored in redis for 3 hourse after the first user use , 
+
+
+
+create filter on those whihc oyu send email when you send email , 

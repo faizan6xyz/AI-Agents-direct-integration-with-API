@@ -46,13 +46,7 @@ def mark_disconnected(user_id):
     dbimp.update_rows(table_name , {"Connected" : 0 } , {"id" : user_id} )
 
 def build_flow():
-    return Flow.from_client_config({"web": { 
-                                        "client_id": CLIENT_ID,
-                                        "client_secret": CLIENT_SECRET,
-                                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                                        "token_uri": "https://oauth2.googleapis.com/token",
-                                        "redirect_uris": [REDIRECT_URI], }},
-                                    scopes=SCOPES,redirect_uri=REDIRECT_URI)
+    return Flow.from_client_config({"web": { "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token", "redirect_uris": [REDIRECT_URI], }}, scopes=SCOPES,redirect_uri=REDIRECT_URI)
 
 def get_drive_service(user_id):
     tokens = load_tokens(user_id)
@@ -98,7 +92,6 @@ def get_or_create_folder(service, folder_name, parent_id=None):
 
 def create_platform_folder_structure(service):
     structure = {}
-    get_or_create_folder(service,"marketing_due") # to store the info about the sending people
     for platform in PLATFORM_FOLDERS:
         platform_id, platform_created = get_or_create_folder(service, platform)
         structure[platform] = {"_id": platform_id, "_created": platform_created}
