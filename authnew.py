@@ -1,7 +1,7 @@
 import base64
 import string
 import secrets
-from datetime import datetime ,timezone
+from datetime import datetime ,timezone , timedelta
 import random 
 import database.UserDB as dbimp
 
@@ -12,14 +12,12 @@ def random_text(limit):
     random.SystemRandom().shuffle(password)
     return ''.join(password)
 
-
 def jsonspoof(user_id, timestamp):
     user_id1 = base64.b64encode(user_id.encode("utf-8")).decode("utf-8")
     time1 = base64.b64encode(str(timestamp).encode("utf-8")).decode("utf-8")
     signature = f"{user_id}++{random_text(6)}--{timestamp}"
     signature1 = base64.b64encode(signature.encode("utf-8")).decode("utf-8")
     return f"{user_id1}.{time1}.{signature1}"
-
 
 def jp(token):
     token = token.split(".")
@@ -39,16 +37,14 @@ def process(token):
     sign = decd["sign"] if decd["sign"] else False
     if not user_id or not time or not sign :
         return "user_id,time,sign of them is missing"
-    tok = dbimp.select_rows("users", select="token", filters={"user_id":user_id})
-    if not tok or tok != token :
+    tok = dbimp.select_rows("users", select="Token", filters={"user_id":user_id})[0]
+    if not tok or tok == token :
         return "current token mismatch"
-    if datetime.now(timezone.utc) > time :
-        time = datetime.now(timezone.utc)
+    if datetime.now(timezone.utc) > datetime.fromisoformat(time) :
+        time = datetime.now(timezone.utc) + timedelta(hours=3)
         token_new = jsonspoof(user_id=user_id , timestamp=time)
         update = dbimp.update_rows("users" , {"token":token_new},{"user_id":user_id})
         if not update:
             return "unable to update"
         return token_new
-        
-
-
+    return token
