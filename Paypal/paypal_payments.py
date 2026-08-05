@@ -223,14 +223,8 @@ def verify_webhook_signature_local(headers, raw_body: bytes) -> bool:
     except Exception:
         return False
 
-def verify_webhook_signature_remote(headers, event: dict) -> bool:
-    payload = { "auth_algo": headers.get("Paypal-Auth-Algo"),
-                "cert_url": headers.get("Paypal-Cert-Url"),
-                "transmission_id": headers.get("Paypal-Transmission-Id"),
-                "transmission_sig": headers.get("Paypal-Transmission-Sig"),
-                "transmission_time": headers.get("Paypal-Transmission-Time"),
-                "webhook_id": WEBHOOK_ID,
-                "webhook_event": event,}
+def verify_webhook_signature_remote(headers, event: dict) -> bool: 
+    payload = { "auth_algo": headers.get("Paypal-Auth-Algo"), "cert_url": headers.get("Paypal-Cert-Url"), "transmission_id": headers.get("Paypal-Transmission-Id"),"transmission_sig": headers.get("Paypal-Transmission-Sig"),"transmission_time": headers.get("Paypal-Transmission-Time"),"webhook_id": WEBHOOK_ID,"webhook_event": event,}
     resp = paypal_request("POST", "/v1/notifications/verify-webhook-signature", headers={"Content-Type": "application/json", "Authorization": f"Bearer {get_access_token()}"}, json=payload, )
     if resp.status_code != 200:
         raise PayPalError(f"Verification call failed: {resp.status_code}")
@@ -258,18 +252,12 @@ app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
 limiter = Limiter(get_remote_address, app=app, storage_uri=RATE_LIMIT_STORAGE_URI, default_limits=[])
 
-@app.route("/api/whoami", methods=["GET"])
-def whoami():
-    if "user_id" not in session:
-        return jsonify({"error": "not_logged_in"}), 401
-    return jsonify({"user_id": session["user_id"], "email": session.get("email")})
-
 @app.route("/api/demo/seed-cart", methods=["POST"])
 @limiter.limit("10 per minute")
 def seed_cart():
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
-    user_id = body.get("user_id")
+    user_id = request.args.get("user_id")
     plan_key = body.get("plan_id", "basic_monthly") # default is basic monthly
     if not cart_id or not user_id:
         return jsonify({"error": "cart_id and user_id required"}), 400
