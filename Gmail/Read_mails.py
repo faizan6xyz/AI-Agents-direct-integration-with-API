@@ -50,7 +50,7 @@ def get_service(user_id):
         raise ValueError(f"Client secret file at '{CLIENT_SECRET_PATH}' is empty.")
     with open(CLIENT_SECRET_PATH, 'r') as f:
         client_secrets = json.load(f)
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})[0]
     row = rows[0] if rows else None
     creds = None
     if row:
