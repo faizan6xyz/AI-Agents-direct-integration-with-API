@@ -4,12 +4,18 @@ import requests
 from flask import Flask, request, redirect, jsonify
 from Whatsapp.new import ( WA_APP_ID, WA_REDIRECT_URI, GRAPH_VERSION, SCOPE, APP_SECRET, VERIFY_TOKEN, TABLE_NAME, VALID_MEDIA_TYPES, log,  InvalidPhoneNumberError, MessageTooLongError, FileTooLargeError, is_valid_signature, require_api_key, ensure_csv_exists, ensure_excel_exists, process_single_message, get_user_for_phone_number_id, check_user_id, refresh_token, send_whatsapp_message, send_whatsapp_media, send_whatsapp_location, send_whatsapp_reply_buttons, send_whatsapp_list, )
 import database.UserDB as dbimp
+import authnew as au
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 
 @app.route("/auth/whatsapp/login")
 def whatsapp_login():
-    user_id = request.args.get("user_id")  # /auth/whatsapp/login?user_id=<some_id>
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+  # /auth/whatsapp/login?user_id=<some_id>
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
     params = {"client_id": WA_APP_ID,"redirect_uri": WA_REDIRECT_URI,"scope": SCOPE,"response_type": "code","state": user_id,}
@@ -99,7 +105,12 @@ def test_send():
     auth_error = require_api_key()
     if auth_error:
         return auth_error
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     account_id = request.args.get("account_id")
     if not user_id or not account_id:
         return jsonify({"error": "'user_id' and 'account_id' are required"}), 400

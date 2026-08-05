@@ -6,6 +6,7 @@ from flask import Flask, request, redirect, jsonify
 from supabase import create_client, Client
 from datetime import datetime, timezone, timedelta
 import time 
+import authnew as au
 import Instagram.upload as uploadd
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -81,7 +82,11 @@ def instagram_callback():
 
 @app.route("/instagram/posts/<account_id>")
 def get_instagram_posts(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x :
         return " Invalid user id " 
@@ -111,7 +116,11 @@ def get_instagram_posts(account_id):
 
 @app.route("/instagram/comments/<account_id>/<media_id>")
 def get_instagram_comments(account_id, media_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x :
         return " Invalid user id " 
@@ -151,7 +160,11 @@ def _coerce_int(name: str, value):
 
 @app.route("/instagram/upload/<account_id>/story", methods=["POST"])
 def story(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
@@ -197,7 +210,11 @@ def story(account_id):
 
 @app.route("/instagram/upload/<account_id>/photo", methods=["POST"])
 def photo(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
@@ -239,7 +256,11 @@ def photo(account_id):
 
 @app.route("/instagram/upload/<account_id>/video", methods=["POST"])
 def video(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
@@ -295,7 +316,11 @@ def video(account_id):
  
 @app.route("/instagram/upload/<account_id>/carousel", methods=["POST"])
 def carousel(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
@@ -341,7 +366,11 @@ def carousel(account_id):
     
 @app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
 def insight(account_id, media_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
@@ -369,7 +398,11 @@ def insight(account_id, media_id):
     
 @app.route("/instagram/comments/reply/batch/<account_id>", methods=["POST"])
 def reply_to_comments_batch(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
@@ -408,7 +441,11 @@ def reply_to_comments_batch(account_id):
 
 @app.route("/instagram/send-message/<account_id>", methods=["POST"])
 def send_instagram_message(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     x = check_user_id(user_id)
     if not x:
         return jsonify({"error": "invalid user id"}), 400
@@ -437,7 +474,11 @@ def send_instagram_message(account_id):
 
 @app.route("/instagram/followers/<account_id>")
 def get_followers_count_route(account_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
     if not check_user_id(user_id):
         return jsonify({"error": "invalid user id"}), 401
     rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]

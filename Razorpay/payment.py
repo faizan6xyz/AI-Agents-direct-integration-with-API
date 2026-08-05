@@ -5,6 +5,7 @@ import hmac
 import hashlib
 from datetime import datetime, timezone
 import logging
+import authnew as au
 import functools
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
@@ -100,7 +101,12 @@ def checkout_page():
 def create_payment():
     body = request.get_json(silent=True) or {}
     plan_id = body.get("plan_id")
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     if not plan_id or plan_id not in Plan:
         return jsonify({"error": "invalid_plan_id"}), 400
     plan = Plan[plan_id]
@@ -174,7 +180,12 @@ def verify_payment():
 @app.route("/api/payment/status/<payment_id>", methods=["GET"])
 @limiter.limit("30 per minute")
 def payment_status(payment_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     try:
         resp = _request("GET", f"/payments/{payment_id}")
     except RazorpayError as e:
@@ -196,7 +207,12 @@ def payment_status(payment_id):
 @app.route("/api/payment/capture/<payment_id>", methods=["POST"])
 @limiter.limit("10 per minute")
 def capture_payment(payment_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     try:
         status_resp = _request("GET", f"/payments/{payment_id}")
         if status_resp.status_code == 404:

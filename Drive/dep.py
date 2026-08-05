@@ -13,6 +13,7 @@ from googleapiclient.discovery import build
 from itsdangerous import URLSafeSerializer, BadSignature
 from cryptography.fernet import Fernet
 import database.UserDB as dbimp
+import authnew as au
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
@@ -102,7 +103,12 @@ def create_platform_folder_structure(service):
 
 @app.route("/connect-drive")
 def connect_drive():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
     flow = build_flow()
@@ -125,7 +131,12 @@ def oauth_callback():
 
 @app.route("/drive/files")
 def list_files():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
     service = get_drive_service(user_id)
@@ -143,7 +154,12 @@ def list_files():
 
 @app.route("/drive/setup-folders", methods=["POST"])
 def setup_folders():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
     service = get_drive_service(user_id)
@@ -157,7 +173,12 @@ def setup_folders():
 
 @app.route("/drive/upload", methods=["POST"])
 def upload_file():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     if not user_id:
         return jsonify({"error": "user_id required"}), 400
     service = get_drive_service(user_id)
@@ -198,7 +219,12 @@ def upload_file():
 
 @app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     file_id = request.args.get("file_id")
     if not user_id or not file_id:
         return jsonify({"error": "user_id and file_id required"}), 400
@@ -216,7 +242,12 @@ def delete_file():
 
 @app.route("/drive/metadata")
 def get_drive_file_metadata():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     file_id = request.args.get("file_id")
     if not user_id or not file_id:
         return jsonify({"error": "user_id and file_id required"}), 400

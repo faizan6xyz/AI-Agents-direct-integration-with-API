@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import Gmail.Read_mails as gc  # rename to match your actual module filename
+import authnew as au
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gmail_api")
@@ -35,7 +36,12 @@ def require_api_key(f):
     return wrapper
 
 def get_valid_user_id():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     if not user_id or not USER_ID_RE.match(user_id):
         return None
     return user_id
@@ -265,7 +271,12 @@ def rate_limit_handler(e):
 @app.route('/messages/send-multiple', methods=['POST'])
 @limiter.limit("10 per minute")
 def send_multiple_message():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     data = request.get_json(force=True) or {}
     messages = data.get('messages')
     if not messages or not isinstance(messages, list):
@@ -294,7 +305,12 @@ def send_multiple_message():
 @app.route('/messages/send-multiple-with-attachments', methods=['POST'])
 @limiter.limit("10 per minute")
 def send_multiple_message_with_attachments():
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     recipients_raw = request.form.get('to')
     subject = request.form.get('subject', '')
     body_text = request.form.get('body_text', '')

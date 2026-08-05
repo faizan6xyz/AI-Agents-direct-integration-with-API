@@ -7,7 +7,7 @@ import base64
 import zlib
 import logging
 import threading
-import functools
+import authnew as au
 import requests
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, session
@@ -257,7 +257,12 @@ limiter = Limiter(get_remote_address, app=app, storage_uri=RATE_LIMIT_STORAGE_UR
 def seed_cart():
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     plan_key = body.get("plan_id", "basic_monthly") # default is basic monthly
     if not cart_id or not user_id:
         return jsonify({"error": "cart_id and user_id required"}), 400
@@ -271,7 +276,12 @@ def seed_cart():
 def create_payment():
     body = request.get_json(silent=True) or {}
     cart_id = body.get("cart_id")
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     check = logincheck(user_id)
     if not check["logged_in"] :
         return json({"status": False})
@@ -326,7 +336,12 @@ def create_payment():
 
 @app.route("/api/payment/status/<order_id>", methods=["GET"])
 def payment_status(order_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     check = logincheck(user_id)
     if not check["logged_in"] :
         return json({"status": False})
@@ -349,7 +364,12 @@ def payment_status(order_id):
 @app.route("/api/payment/capture/<order_id>", methods=["POST"])
 @limiter.limit("10 per minute")
 def capture_payment(order_id):
-    user_id = request.args.get("user_id")
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+
     check = logincheck(user_id)
     if not check["logged_in"] :
         return json({"status": False})

@@ -30,16 +30,16 @@ def jp(token):
 
 def process(token):
     if not token.strip():
-        return "Token is needed"
+        return {"status" : False , "reason": "Token is needed"}
     decd = jp(token)
     user_id = decd["user"] if decd["user"] else False
     time = decd["time"] if decd["time"] else False
     sign = decd["sign"] if decd["sign"] else False
     if not user_id or not time or not sign :
-        return "user_id,time,sign of them is missing"
+        return {"status" : False, "reason" : "user_id,time,sign of them is missing"}
     tok = dbimp.select_rows("users", select="Token", filters={"user_id":user_id})[0]
     if not tok or tok == token :
-        return "current token mismatch"
+        return {"status" : False , "reason" : "token mismatch"}
     if datetime.now(timezone.utc) > datetime.fromisoformat(time) :
         time = datetime.now(timezone.utc) + timedelta(hours=3)
         token_new = jsonspoof(user_id=user_id , timestamp=time)
@@ -47,4 +47,4 @@ def process(token):
         if not update:
             return "unable to update"
         return token_new
-    return token
+    return {"status" : True , "token" : token , "user_id":user_id }
