@@ -243,41 +243,20 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
         logger.warning("Local webhook verification failed, falling back to API: %s", e)
         return verify_webhook_signature_remote(headers, event)
 
-def login_required(f):
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            return jsonify({"error": "not_logged_in"}), 401
-        return f(*args, **kwargs)
-    return wrapper
+def logincheck(user_id):
+    if not user_id :
+        return jsonify({"logged_in": True, "user_id": user_id})
+    try :
+        user_id = dbimp.select_rows(PAYPAL_TABLE , select="id" , filters={"id": user_id})
+    except Exception :
+        return jsonify({"logged_in": True, "user_id": user_id})
+    if not user_id :
+        return({"logged_in": False, "user_id": user_id })
+    return jsonify({"logged_in": True, "user_id": user_id})
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
 limiter = Limiter(get_remote_address, app=app, storage_uri=RATE_LIMIT_STORAGE_URI, default_limits=[])
-
-@app.route("/api/login", methods=["POST"])
-@limiter.limit("5 per minute")
-def login():
-    body = request.get_json(silent=True) or {}
-    email = body.get("email")
-    password = body.get("password")
-    if not email or not password:
-        return jsonify({"error": "email and password required"}), 400
-    try:
-        result = supabase.auth.sign_in_with_password({"email": email, "password": password})
-    except Exception as e:
-        logger.warning("Login failed for %s: %s", email, e)
-        return jsonify({"error": "invalid_credentials"}), 401
-    if not result.user:
-        return jsonify({"error": "invalid_credentials"}), 401
-    session["user_id"] = result.user.id
-    session["email"] = result.user.email
-    return jsonify({"logged_in": True, "user_id": result.user.id})
-
-@app.route("/api/logout", methods=["POST"])
-def logout():
-    session.clear()
-    return jsonify({"logged_out": True})
 
 @app.route("/api/whoami", methods=["GET"])
 def whoami():
@@ -301,11 +280,13 @@ def seed_cart():
 
 @app.route("/api/payment/create", methods=["POST"])
 @limiter.limit("10 per minute")
-@login_required
 def create_payment():
     body = request.get_json(silent=True) or {}
-    user_id = session["user_id"]
     cart_id = body.get("cart_id")
+    user_id = request.args.get("user_id")
+    check = logincheck(user_id)
+    if not check["logged_in"] :
+        return json({"status": False})
     if not cart_id:
         return jsonify({"error": "cart_id required"}), 400
     cart = get_cart_for_user(user_id)
@@ -356,9 +337,12 @@ def create_payment():
     return jsonify(result)
 
 @app.route("/api/payment/status/<order_id>", methods=["GET"])
-@login_required
 def payment_status(order_id):
-    order = get_order_for_user(session["user_id"], order_id)
+    user_id = request.args.get("user_id")
+    check = logincheck(user_id)
+    if not check["logged_in"] :
+        return json({"status": False})
+    order = get_order_for_user(user_id , order_id)
     if not order:
         return jsonify({"error": "order_not_found"}), 404
     try:
@@ -376,9 +360,11 @@ def payment_status(order_id):
 
 @app.route("/api/payment/capture/<order_id>", methods=["POST"])
 @limiter.limit("10 per minute")
-@login_required
 def capture_payment(order_id):
-    user_id = session["user_id"]
+    user_id = request.args.get("user_id")
+    check = logincheck(user_id)
+    if not check["logged_in"] :
+        return json({"status": False})
     order = get_order_for_user(user_id, order_id)
     if not order:
         return jsonify({"error": "order_not_found"}), 404
