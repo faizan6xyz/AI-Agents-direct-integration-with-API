@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 import requests
@@ -7,6 +8,7 @@ import database.UserDB as dbimp
 import authnew as au
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
+OAUTH_STATE_TTL_MINUTES = 10
 
 @app.route("/auth/whatsapp/login")
 def whatsapp_login():
@@ -15,31 +17,54 @@ def whatsapp_login():
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-  # /auth/whatsapp/login?user_id=<some_id>
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
-    params = {"client_id": WA_APP_ID,"redirect_uri": WA_REDIRECT_URI,"scope": SCOPE,"response_type": "code","state": user_id,}
+    state = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OAUTH_STATE_TTL_MINUTES)
+    try:
+        dbimp.insert_row(TABLE_NAME, {"State": state, "id": user_id, "Expire_state": expires_at.isoformat()})
+    except Exception as e:
+        log.exception(f"Failed to persist oauth state for user {user_id}: {e}")
+        return jsonify({"error": "failed to start login"}), 500
+    params = {"client_id": WA_APP_ID,"redirect_uri": WA_REDIRECT_URI,"scope": SCOPE,"response_type": "code","state": state,}
     auth_url = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?" + urlencode(params)
     return redirect(auth_url)
 
 @app.route("/auth/whatsapp/callback")
 def whatsapp_callback():
     code = request.args.get("code")
-    user_id = request.args.get("state")
+    state = request.args.get("state")
     if not code:
         return jsonify({"error": "missing code"}), 400
-    if not user_id:
-        return jsonify({"error": "missing user id"}), 400
+    if not state:
+        return jsonify({"error": "missing state"}), 400
+    state_rows = dbimp.select_rows(TABLE_NAME, filters={"State": state})
+    if not state_rows:
+        log.warning("OAuth callback received with unknown or already-used state.")
+        return jsonify({"error": "invalid or expired state"}), 400
+    state_row = state_rows[0]
+    try:
+        dbimp.delete_rows(TABLE_NAME, filters={"State": state})
+    except Exception as e:
+        log.exception(f"Failed to delete oauth state {state}: {e}")
+    expires_at = datetime.fromisoformat(state_row["expires_at"])
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
+        return jsonify({"error": "state expired, please restart login"}), 400
+    user_id = state_row["user_id"]
     if not check_user_id(user_id):
         return jsonify({"error": "invalid user id"}), 400
     token_resp = requests.get(f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token", params={"client_id": WA_APP_ID,"client_secret": APP_SECRET,"redirect_uri": WA_REDIRECT_URI,"code": code,},).json()
     short_token = token_resp.get("access_token")
     if not short_token:
+        log.error(f"Short-token exchange failed for user {user_id}: {token_resp}")
         return jsonify({"error": "token exchange failed", "details": token_resp}), 400
     long_resp = requests.get(f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token", params={"grant_type": "fb_exchange_token","client_id": WA_APP_ID,"client_secret": APP_SECRET,"fb_exchange_token": short_token,},).json()
     long_token = long_resp.get("access_token")
     seconds = long_resp.get("expires_in")
     if not long_token or not seconds:
+        log.error(f"Long-token exchange failed for user {user_id}: {long_resp}")
         return jsonify({"error": "token exchange failed", "details": long_resp}), 400
     expire_time = datetime.now(timezone.utc) + timedelta(seconds=seconds)
     debug = requests.get(f"https://graph.facebook.com/{GRAPH_VERSION}/debug_token",params={"input_token": long_token, "access_token": f"{WA_APP_ID}|{APP_SECRET}"}, ).json()
@@ -48,20 +73,23 @@ def whatsapp_callback():
     for scope in granular_scopes:
         if scope.get("scope") == "whatsapp_business_management":
             waba_ids.extend(scope.get("target_ids", []))
-    waba_id = waba_ids[0] if waba_ids else None
-    phone_number_id = None
-    display_number = None
-    if waba_id:
-        phones = requests.get( f"https://graph.facebook.com/{GRAPH_VERSION}/{waba_id}/phone_numbers", params={"access_token": long_token},).json()
-        numbers = phones.get("data", [])
-        if numbers:
-            phone_number_id = numbers[0].get("id")
-            display_number = numbers[0].get("display_phone_number")
+    if not waba_ids:
+        log.warning(f"OAuth completed for user {user_id} but no WABA was granted.")
+        return jsonify({"error": "no WhatsApp Business Account was authorized"}), 422
+    waba_id = waba_ids[0]
+    phones = requests.get( f"https://graph.facebook.com/{GRAPH_VERSION}/{waba_id}/phone_numbers", params={"access_token": long_token},).json()
+    numbers = phones.get("data", [])
+    if not numbers:
+        log.warning(f"OAuth completed for user {user_id}, WABA {waba_id} has no phone numbers.")
+        return jsonify({"error": "no phone number found on this WhatsApp Business Account"}), 422
+    phone_number_id = numbers[0].get("id")
+    display_number = numbers[0].get("display_phone_number")
     try:
         dbimp.update_rows( TABLE_NAME,{"Access_token": long_token,"Timestamp": datetime.now(timezone.utc).isoformat(),"Token_expire": expire_time.isoformat(),"Bussiness_id": waba_id,"Account_id": phone_number_id,"Phone_no": display_number,},filters={"id": user_id},)
     except Exception as e:
+        log.exception(f"Failed to save WhatsApp token for user {user_id}: {e}")
         return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
-    return jsonify({"user_id": user_id,"waba_id": waba_id,"phone_number_id": phone_number_id,"access_token": long_token,})
+    return jsonify({"status": "connected","waba_id": waba_id,"phone_number_id": phone_number_id,"phone_no": display_number,})
 
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
@@ -98,7 +126,7 @@ def receive_webhook_message():
                         log.exception(f"Failed to process message {msg.get('id')}: {e}")
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
-    return jsonify({"status": "received", "data" : data}), 200
+    return jsonify({"status": "received"}), 200
 
 @app.route("/send-test", methods=["POST"])
 def test_send():
@@ -114,17 +142,15 @@ def test_send():
     account_id = request.args.get("account_id")
     if not user_id or not account_id:
         return jsonify({"error": "'user_id' and 'account_id' are required"}), 400
-    phone_number_raw = request.args.get("phone_number")
-    if not phone_number_raw:
-        return jsonify({"error": "'phone_number' query param is required"}), 400
-    try:
-        phoneno = int(phone_number_raw)
-    except ValueError:
-        return jsonify({"error": "'phone_number' must be numeric"}), 400
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id},)
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire,Account_id", filters={"id": user_id, "Account_id": account_id},)
     if not rows:
         return jsonify({"error": "no whatsapp account linked"}), 404
     row = rows[0]
+    try:
+        phoneno = int(row["Account_id"])
+    except (TypeError, ValueError):
+        log.error(f"Invalid Account_id on file for user {user_id}, account {account_id}.")
+        return jsonify({"error": "invalid account_id on file"}), 500
     access_token = row["Access_token"]
     token_expiry = row["Token_expire"]
     if not access_token or not token_expiry:
@@ -133,7 +159,11 @@ def test_send():
     if token_expiry.tzinfo is None:
         token_expiry = token_expiry.replace(tzinfo=timezone.utc)
     if token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        access_token = refresh_token(user_id, access_token)
+        refreshed = refresh_token(user_id, access_token)
+        if not refreshed:
+            log.error(f"Token refresh failed for user {user_id}, account {account_id}.")
+            return jsonify({"error": "token refresh failed, please reconnect WhatsApp"}), 502
+        access_token = refreshed
     data = request.get_json(silent=True)
     if not data or "phone" not in data:
         return jsonify({"error": "Please provide at least 'phone'"}), 400

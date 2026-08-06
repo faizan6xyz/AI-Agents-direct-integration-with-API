@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 import time 
 import authnew as au
 import Instagram.upload as uploadd
+import secrets
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 app = Flask(__name__)
@@ -43,41 +44,57 @@ def refresh_token(user_id, access_token):
         return new_token
     return access_token
 
-@app.route("/auth/instagram/login") 
+@app.route("/auth/instagram/login")
 def instagram_login():
-    user_id = request.args.get("user_id")   # takes user_id from http://localhost:5000/auth/instagram/login?user_id=<some_id>
+    user_id = request.args.get("user_id")
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
-    params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code" ,  "state": user_id,}
+    if not check_user_id(user_id):
+        return jsonify({"error": "invalid user id"}), 400
+    state = secrets.token_urlsafe(24)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=10)
+    dbimp.update_rows(TABLE_NAME, {"State": state, "Expire_state": expire.isoformat()}, filters={"id": user_id})
+    params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code", "state": state}
     auth_url = "https://www.instagram.com/oauth/authorize?" + urlencode(params)
     return redirect(auth_url)
 
 @app.route("/auth/instagram/callback")
 def instagram_callback():
     code = request.args.get("code")
-    user_id = request.args.get("state")
+    state = request.args.get("state")
     if not code:
         return jsonify({"error": "missing code"}), 400
-    if not user_id:
-        return jsonify({"error": "missing user id"}), 400
+    if not state:
+        return jsonify({"error": "missing state"}), 400
+    rows = dbimp.select_rows(TABLE_NAME, select="id,Expire_state", filters={"State": state})
+    row = rows[0] if rows else None
+    if not row:
+        return jsonify({"error": "invalid or expired state"}), 400
+    expiry = datetime.fromisoformat(row["Expire_state"])
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expiry:
+        return jsonify({"error": "state expired"}), 400
+    user_id = row["id"]
+    dbimp.update_rows(TABLE_NAME, {"State": None, "Expire_state": None}, filters={"id": user_id})
     if not check_user_id(user_id):
         return jsonify({"error": "invalid user id"}), 400
-    token_resp = requests.post("https://api.instagram.com/oauth/access_token",data={"client_id": IG_APP_ID, "client_secret": IG_APP_SECRET,"grant_type": "authorization_code","redirect_uri": IG_REDIRECT_URI,"code": code,},).json()
+    token_resp = requests.post("https://api.instagram.com/oauth/access_token",data={"client_id": IG_APP_ID,"client_secret": IG_APP_SECRET,"grant_type": "authorization_code","redirect_uri": IG_REDIRECT_URI,"code": code, },).json()
     short_token = token_resp.get("access_token")
     ig_user_id = token_resp.get("user_id")
     if not short_token:
         return jsonify({"error": "token exchange failed", "details": token_resp}), 400
-    long_resp = requests.get("https://graph.instagram.com/access_token",params={"grant_type": "ig_exchange_token", "client_secret": IG_APP_SECRET, "access_token": short_token, },).json()
+    long_resp = requests.get("https://graph.instagram.com/access_token",params={"grant_type": "ig_exchange_token","client_secret": IG_APP_SECRET,"access_token": short_token,},).json()
     long_token = long_resp.get("access_token")
     seconds = long_resp.get("expires_in")
     if not long_token or not seconds:
         return jsonify({"error": "token exchange failed", "details": long_resp}), 400
     expire_time = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-    about = requests.get( "https://graph.instagram.com/me", params={"fields": "id,username,account_type,media_count", "access_token": long_token}).json()
+    about = requests.get("https://graph.instagram.com/me",params={"fields": "id,username,account_type,media_count", "access_token": long_token},).json()
     account = about.get("username")
     account_id = about.get("id")
     try:
-        dbimp.update_rows( TABLE_NAME, { "Access_token": long_token, "Timestamp": datetime.now(timezone.utc).isoformat(), "Token_expire": expire_time.isoformat(), "Username" : account , "Account_id": account_id},filters={"id": user_id},)
+        dbimp.update_rows(TABLE_NAME,{"Access_token": long_token,"Timestamp": datetime.now(timezone.utc).isoformat(),"Token_expire": expire_time.isoformat(),"Username": account,"Account_id": account_id,},filters={"id": user_id},)
     except Exception as e:
         return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
     return jsonify({"user_id": ig_user_id, "access_token": long_token})
