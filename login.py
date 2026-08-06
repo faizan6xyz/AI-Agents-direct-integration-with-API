@@ -23,7 +23,8 @@ def login():
         res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
         if res.user is None:
             return jsonify({"error": "invalid credentials"}), 401
-        return jsonify({"user_id": res.user.id}), 200
+        token = dbimp.select_rows("users" , select="Token", filters={"user_id":res.user.id})[0]
+        return jsonify({"user_id": res.user.id, "Token":token["Token"]}), 200
     except Exception as e:
         return jsonify({"error": "invalid credentials", "detail": str(e)}), 401
 
