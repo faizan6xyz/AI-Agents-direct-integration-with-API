@@ -121,7 +121,7 @@ def test_send():
         phoneno = int(phone_number_raw)
     except ValueError:
         return jsonify({"error": "'phone_number' must be numeric"}), 400
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id},)[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id},)
     if not rows:
         return jsonify({"error": "no whatsapp account linked"}), 404
     row = rows[0]

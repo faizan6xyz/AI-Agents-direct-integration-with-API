@@ -34,7 +34,8 @@ def Update_token(user_id, access_token, refresh_token, expiry):
     dbimp.update_rows(table_name, {"Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token": fernet.encrypt(refresh_token.encode()) , "Token_expire": fernet.encrypt(expiry.isoformat().encode()) }, {"id" : user_id})
 
 def load_tokens(user_id):
-    row = dbimp.select_rows(table_name , filters= {"id" : user_id})[0]
+    rows = dbimp.select_rows(table_name , filters= {"id" : user_id})
+    row = rows[0] if rows else None
     if not row :    
         return None
     access_token = row["Access_token"]

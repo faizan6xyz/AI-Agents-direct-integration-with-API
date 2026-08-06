@@ -21,7 +21,9 @@ TABLE_NAME = "Instagram"
 SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,"
 
 def check_user_id(uuser_id):
-    exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": uuser_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": uuser_id})
+    exist = rows[0] if rows else None
+
     if not exist:
         return False
     return True
@@ -90,7 +92,7 @@ def get_instagram_posts(account_id):
     x = check_user_id(user_id)
     if not x :
         return " Invalid user id " 
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire" , filters={"id": user_id , "Account_id" : account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire" , filters={"id": user_id , "Account_id" : account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -124,7 +126,7 @@ def get_instagram_comments(account_id, media_id):
     x = check_user_id(user_id)
     if not x :
         return " Invalid user id " 
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -168,7 +170,7 @@ def story(account_id):
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -218,7 +220,7 @@ def photo(account_id):
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -264,7 +266,7 @@ def video(account_id):
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -324,7 +326,7 @@ def carousel(account_id):
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -374,7 +376,7 @@ def insight(account_id, media_id):
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -406,7 +408,7 @@ def reply_to_comments_batch(account_id):
     x = check_user_id(user_id)
     if not x:
         return " Invalid user id "
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -454,7 +456,7 @@ def send_instagram_message(account_id):
     message = body.get("message")
     if not recipient_id or not message:
         return jsonify({"error": "recipient_id and message are required"}), 400
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]
@@ -481,7 +483,7 @@ def get_followers_count_route(account_id):
     user_id = tokench['user_id']
     if not check_user_id(user_id):
         return jsonify({"error": "invalid user id"}), 401
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})[0]
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
     if not rows:
         return jsonify({"error": "no instagram account linked"}), 404
     row = rows[0]

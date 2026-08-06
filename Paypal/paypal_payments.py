@@ -25,9 +25,6 @@ import database.UserDB as dbimp
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
-def _now_iso():
-    return _now().isoformat()
-
 def _require(key):
     val = os.environ.get(key)
     if not val:
@@ -73,7 +70,9 @@ def _update_succeeded(resp) -> bool:
     return bool(resp)
 
 def seed_demo_cart(user_id, cart_id, plan_key):
-    existing = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"id": user_id})[0]
+    rows = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"id": user_id})
+    existing = rows[0] if rows else None
+
     data = {"Cart_id": cart_id, "Plan": plan_key, "Status": "CREATED", "Paid": 0}
     if existing:
         dbimp.update_rows(PAYPAL_TABLE, data, {"id": user_id})
@@ -82,7 +81,9 @@ def seed_demo_cart(user_id, cart_id, plan_key):
         dbimp.insert_rows(PAYPAL_TABLE, data)
 
 def get_cart_for_user(user_id):
-    row = dbimp.select_rows( PAYPAL_TABLE, select="id,Cart_id,Plan,Status,Paid,Paypal_order_id", filters={"id": user_id}, )[0]
+    rows = dbimp.select_rows( PAYPAL_TABLE, select="id,Cart_id,Plan,Status,Paid,Paypal_order_id", filters={"id": user_id}, )
+    row = rows[0] if rows else None
+
     return dict(row) if row else None
 
 def get_active_order_for_user(user_id):
@@ -98,15 +99,17 @@ def get_order_for_user(user_id, paypal_order_id):
     return row
 
 def get_user_id_for_order(paypal_order_id):
-    row = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"Paypal_order_id": paypal_order_id})[0]
+    rows = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"Paypal_order_id": paypal_order_id})
+    row = rows[0] if rows else None
+
     return row["id"] if row else None
 
 def save_order(user_id, paypal_order_id, cart_id, plan_key) -> bool:
-    resp = dbimp.update_rows( PAYPAL_TABLE, {"Paypal_order_id": paypal_order_id,"Cart_id": cart_id,"Plan": plan_key,"Status": "CREATED","Updated_at": _now_iso(),},{"id": user_id},)
+    resp = dbimp.update_rows( PAYPAL_TABLE, {"Paypal_order_id": paypal_order_id,"Cart_id": cart_id,"Plan": plan_key,"Status": "CREATED","Updated_at": _now(),},{"id": user_id},)
     return _update_succeeded(resp)
 
 def mark_order_paid(user_id, paypal_order_id) -> bool:
-    resp = dbimp.update_rows(PAYPAL_TABLE, {"Paid": 1, "Status": "COMPLETED", "Updated_at": _now_iso()}, {"id": user_id, "Paypal_order_id": paypal_order_id, "Paid": 0},)
+    resp = dbimp.update_rows(PAYPAL_TABLE, {"Paid": 1, "Status": "COMPLETED", "Updated_at": _now()}, {"id": user_id, "Paypal_order_id": paypal_order_id, "Paid": 0},)
     return _update_succeeded(resp)
 
 def _hash_request(payload):
@@ -114,7 +117,9 @@ def _hash_request(payload):
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 def get_idempotent_response(user_id, key, request_hash):
-    row = dbimp.select_rows( VERIFY_TABLE, select="Idempotency_key,Request_hash,Response", filters={"id": user_id})[0]
+    rows = dbimp.select_rows( VERIFY_TABLE, select="Idempotency_key,Request_hash,Response", filters={"id": user_id})
+    row = rows[0] if rows else None
+
     if not row or row["Idempotency_key"] != key:
         return None, False
     if row["Request_hash"] != request_hash:
@@ -123,7 +128,8 @@ def get_idempotent_response(user_id, key, request_hash):
     return (json.loads(resp) if isinstance(resp, str) else resp), False
 
 def save_idempotent_response(user_id, key, request_hash, response):
-    existing = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})[0]
+    rows = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})
+    existing = rows[0] if rows else None
     data = {"Idempotency_key": key, "Request_hash": request_hash, "Response": response}
     if existing:
         dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
@@ -132,14 +138,17 @@ def save_idempotent_response(user_id, key, request_hash, response):
         dbimp.insert_rows(VERIFY_TABLE, data)
 
 def is_duplicate_webhook_event(event_id) -> bool:
-    row = dbimp.select_rows(VERIFY_TABLE, select="Event_id", filters={"Event_id": event_id})[0]
+    rows = dbimp.select_rows(VERIFY_TABLE, select="Event_id", filters={"Event_id": event_id})
+    row = rows[0] if rows else None
+
     return row is not None
 
 def record_webhook_event(event_id, user_id) -> bool:
     if not user_id:
         return False
-    existing = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})[0]
-    data = {"Event_id": event_id, "Created_at": _now_iso()}
+    rows = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})
+    existing = rows[0] if rows else None
+    data = {"Event_id": event_id, "Created_at": _now()}
     if existing:
         dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
     else:
@@ -238,15 +247,14 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
         return verify_webhook_signature_remote(headers, event)
 
 def logincheck(user_id):
-    if not user_id :
-        return jsonify({"logged_in": True,})
-    try :
-        user_id = dbimp.select_rows(PAYPAL_TABLE , select="id" , filters={"id": user_id})[0]
-    except Exception :
-        return jsonify({"logged_in": True,})
-    if not user_id :
-        return({"logged_in": False,  })
-    return jsonify({"logged_in": True, })
+    if not user_id:
+        return {"logged_in": False}
+    try:
+        rows = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"id": user_id})
+        found = rows[0] if rows else None
+    except Exception:
+        return {"logged_in": False}
+    return {"logged_in": bool(found)}
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -282,7 +290,7 @@ def create_payment():
     user_id = tokench['user_id']
     check = logincheck(user_id)
     if not check["logged_in"] :
-        return json({"status": False})
+        return jsonify({"status": False}), 401
     if not cart_id:
         return jsonify({"error": "cart_id required"}), 400
     cart = get_cart_for_user(user_id)
@@ -333,6 +341,7 @@ def create_payment():
     return jsonify(result)
 
 @app.route("/api/payment/status/<order_id>", methods=["GET"])
+@limiter.limit("15 per minute")
 def payment_status(order_id):
     token = request.args.get("token")
     tokench = au.process(token=token)
@@ -341,7 +350,7 @@ def payment_status(order_id):
     user_id = tokench['user_id']
     check = logincheck(user_id)
     if not check["logged_in"] :
-        return json({"status": False})
+        return jsonify({"status": False}), 401
     order = get_order_for_user(user_id , order_id)
     if not order:
         return jsonify({"error": "order_not_found"}), 404
@@ -368,7 +377,7 @@ def capture_payment(order_id):
     user_id = tokench['user_id']
     check = logincheck(user_id)
     if not check["logged_in"] :
-        return json({"status": False})
+        return jsonify({"status": False}), 401
     order = get_order_for_user(user_id, order_id)
     if not order:
         return jsonify({"error": "order_not_found"}), 404
