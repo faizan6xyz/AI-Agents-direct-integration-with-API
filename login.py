@@ -1,8 +1,8 @@
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from flask import Flask, request, jsonify , redirect
-from datetime import datetime ,timezone , timedelta
+from flask import Flask, request, jsonify
+from datetime import datetime, timezone
 import database.UserDB as dbimp
 import authnew as au
 load_dotenv()
@@ -35,33 +35,39 @@ def signup():
         return jsonify({"error": "email and password are required"}), 400
     try:
         res = supabase.auth.sign_up({"email": mail, "password": passw})
-        if res.user is None:
-            return jsonify({"message": "signup started, check email to confirm"}), 202
-        insert = dbimp.insert_rows("users" , {"user_id" : res.user.id , "created_at": datetime.now(timezone.utc)})
-        token = au.jsonspoof(user_id=res.user.id , timestamp= datetime.now(timezone.utc)) 
-        if not insert:
-            return jsonify({"Token": token, "Statusdb" : False}), 200
-        redirect()
-        return jsonify({"Token": token, "Statusdb" : True}), 200
     except Exception as e:
         return jsonify({"error": "signup failed", "detail": str(e)}), 400
+    if res.user is None:
+        return jsonify({"message": "signup started, check email to confirm"}), 202
+    created_at = datetime.now(timezone.utc).isoformat()
+    try:
+        insert = dbimp.insert_rows("users", {"user_id": res.user.id, "created_at": created_at})
+    except Exception as e:
+        insert = None
+        insert_error = str(e)
+    else:
+        insert_error = None
+    token = au.jsonspoof(user_id=res.user.id, timestamp=created_at)
+    if not insert:
+        return jsonify({ "Token": token, "Statusdb": False, "detail": insert_error, }), 200
+    return jsonify({"Token": token, "Statusdb": True, "next": "/details"}), 200
 
-@app.route("/details")
+@app.route("/details", methods=["GET"])
 def details():
     token = request.args.get("token")
     tokench = au.process(token=token)
-    if not tokench["status"] :
-        return jsonify({"status": "failed" , "reason": tokench["reason"]})
-    user_id = tokench['user_id']
+    if not tokench["status"]:
+        return jsonify({"status": False, "reason": tokench["reason"]}), 401
+    user_id = tokench["user_id"]
     name = request.args.get("name")
     gmail = request.args.get("Gmail")
     phone = request.args.get("phone")
     address = request.args.get("address")
     profession = request.args.get("profession")
-    if not name or not gmail or not address or not phone :
-        return jsonify({"status":False , "reason": "address,phone,gmail,name one of them is missing "})
-    try :
-        up = dbimp.update_rows("users", {"name": name , "Phone_number" : phone , "Address" : address , "Gmail":gmail, "Profession" : profession}, {"user_id":user_id})
-    except :
-        return jsonify({"details": True, "Statusdb" : False}), 200
-    return jsonify({"details": True, "Statusdb" : True}), 200
+    if not name or not gmail or not address or not phone:
+        return jsonify({"status": False,"reason": "name, gmail, phone, and address are all required",}), 400
+    try:
+        dbimp.update_rows("users",{"name": name, "Phone_number": phone , "Address": address,"Gmail": gmail, "Profession": profession, },{"user_id": user_id},)
+    except Exception as e:
+        return jsonify({"status": True, "Statusdb": False, "detail": str(e)}), 500
+    return jsonify({"status": True, "Statusdb": True}), 200
