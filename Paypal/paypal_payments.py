@@ -73,7 +73,7 @@ def _update_succeeded(resp) -> bool:
     return bool(resp)
 
 def seed_demo_cart(user_id, cart_id, plan_key):
-    existing = dbimp.select_rows(PAYPAL_TABLE, select={"id"}, filters={"id": user_id})[0]
+    existing = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"id": user_id})[0]
     data = {"Cart_id": cart_id, "Plan": plan_key, "Status": "CREATED", "Paid": 0}
     if existing:
         dbimp.update_rows(PAYPAL_TABLE, data, {"id": user_id})
@@ -98,7 +98,7 @@ def get_order_for_user(user_id, paypal_order_id):
     return row
 
 def get_user_id_for_order(paypal_order_id):
-    row = dbimp.select_rows(PAYPAL_TABLE, select={"id"}, filters={"Paypal_order_id": paypal_order_id})[0]
+    row = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"Paypal_order_id": paypal_order_id})[0]
     return row["id"] if row else None
 
 def save_order(user_id, paypal_order_id, cart_id, plan_key) -> bool:
@@ -115,15 +115,15 @@ def _hash_request(payload):
 
 def get_idempotent_response(user_id, key, request_hash):
     row = dbimp.select_rows( VERIFY_TABLE, select="Idempotency_key,Request_hash,Response", filters={"id": user_id})[0]
-    if not row or row.get("Idempotency_key") != key:
+    if not row or row["Idempotency_key"] != key:
         return None, False
-    if row.get("Request_hash") != request_hash:
+    if row["Request_hash"] != request_hash:
         return None, True
     resp = row.get("Response")
     return (json.loads(resp) if isinstance(resp, str) else resp), False
 
 def save_idempotent_response(user_id, key, request_hash, response):
-    existing = dbimp.select_rows(VERIFY_TABLE, select={"id"}, filters={"id": user_id})[0]
+    existing = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})[0]
     data = {"Idempotency_key": key, "Request_hash": request_hash, "Response": response}
     if existing:
         dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
@@ -132,13 +132,13 @@ def save_idempotent_response(user_id, key, request_hash, response):
         dbimp.insert_rows(VERIFY_TABLE, data)
 
 def is_duplicate_webhook_event(event_id) -> bool:
-    row = dbimp.select_rows(VERIFY_TABLE, select={"Event_id"}, filters={"Event_id": event_id})[0]
+    row = dbimp.select_rows(VERIFY_TABLE, select="Event_id", filters={"Event_id": event_id})[0]
     return row is not None
 
 def record_webhook_event(event_id, user_id) -> bool:
     if not user_id:
         return False
-    existing = dbimp.select_rows(VERIFY_TABLE, select={"id"}, filters={"id": user_id})[0]
+    existing = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})[0]
     data = {"Event_id": event_id, "Created_at": _now_iso()}
     if existing:
         dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
@@ -239,14 +239,14 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
 
 def logincheck(user_id):
     if not user_id :
-        return jsonify({"logged_in": True, "user_id": user_id})
+        return jsonify({"logged_in": True,})
     try :
         user_id = dbimp.select_rows(PAYPAL_TABLE , select="id" , filters={"id": user_id})[0]
     except Exception :
-        return jsonify({"logged_in": True, "user_id": user_id})
+        return jsonify({"logged_in": True,})
     if not user_id :
-        return({"logged_in": False, "user_id": user_id })
-    return jsonify({"logged_in": True, "user_id": user_id})
+        return({"logged_in": False,  })
+    return jsonify({"logged_in": True, })
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -262,7 +262,6 @@ def seed_cart():
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-
     plan_key = body.get("plan_id", "basic_monthly") # default is basic monthly
     if not cart_id or not user_id:
         return jsonify({"error": "cart_id and user_id required"}), 400
@@ -281,7 +280,6 @@ def create_payment():
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-
     check = logincheck(user_id)
     if not check["logged_in"] :
         return json({"status": False})
@@ -341,7 +339,6 @@ def payment_status(order_id):
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-
     check = logincheck(user_id)
     if not check["logged_in"] :
         return json({"status": False})
@@ -369,7 +366,6 @@ def capture_payment(order_id):
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-
     check = logincheck(user_id)
     if not check["logged_in"] :
         return json({"status": False})
