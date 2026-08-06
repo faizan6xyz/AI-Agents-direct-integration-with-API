@@ -1,14 +1,17 @@
-import secrets
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
+import os
 import requests
 from flask import Flask, request, redirect, jsonify
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from Whatsapp.new import ( WA_APP_ID, WA_REDIRECT_URI, GRAPH_VERSION, SCOPE, APP_SECRET, VERIFY_TOKEN, TABLE_NAME, VALID_MEDIA_TYPES, log,  InvalidPhoneNumberError, MessageTooLongError, FileTooLargeError, is_valid_signature, require_api_key, ensure_csv_exists, ensure_excel_exists, process_single_message, get_user_for_phone_number_id, check_user_id, refresh_token, send_whatsapp_message, send_whatsapp_media, send_whatsapp_location, send_whatsapp_reply_buttons, send_whatsapp_list, )
 import database.UserDB as dbimp
 import authnew as au
 app = Flask(__name__)
+app.secret_key = os.environ["FLASK_SECRET_KEY"]
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
-OAUTH_STATE_TTL_MINUTES = 10
+serializer = URLSafeTimedSerializer(app.secret_key)
+STATE_MAX_AGE = 600  # seconds
 
 @app.route("/auth/whatsapp/login")
 def whatsapp_login():
@@ -19,13 +22,7 @@ def whatsapp_login():
     user_id = tokench['user_id']
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
-    state = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=OAUTH_STATE_TTL_MINUTES)
-    try:
-        dbimp.insert_row(TABLE_NAME, {"State": state, "id": user_id, "Expire_state": expires_at.isoformat()})
-    except Exception as e:
-        log.exception(f"Failed to persist oauth state for user {user_id}: {e}")
-        return jsonify({"error": "failed to start login"}), 500
+    state = serializer.dumps(user_id)
     params = {"client_id": WA_APP_ID,"redirect_uri": WA_REDIRECT_URI,"scope": SCOPE,"response_type": "code","state": state,}
     auth_url = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?" + urlencode(params)
     return redirect(auth_url)
@@ -38,21 +35,12 @@ def whatsapp_callback():
         return jsonify({"error": "missing code"}), 400
     if not state:
         return jsonify({"error": "missing state"}), 400
-    state_rows = dbimp.select_rows(TABLE_NAME, filters={"State": state})
-    if not state_rows:
-        log.warning("OAuth callback received with unknown or already-used state.")
-        return jsonify({"error": "invalid or expired state"}), 400
-    state_row = state_rows[0]
     try:
-        dbimp.delete_rows(TABLE_NAME, filters={"State": state})
-    except Exception as e:
-        log.exception(f"Failed to delete oauth state {state}: {e}")
-    expires_at = datetime.fromisoformat(state_row["expires_at"])
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) > expires_at:
+        user_id = serializer.loads(state, max_age=STATE_MAX_AGE)
+    except SignatureExpired:
         return jsonify({"error": "state expired, please restart login"}), 400
-    user_id = state_row["user_id"]
+    except BadSignature:
+        return jsonify({"error": "invalid state"}), 400
     if not check_user_id(user_id):
         return jsonify({"error": "invalid user id"}), 400
     token_resp = requests.get(f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token", params={"client_id": WA_APP_ID,"client_secret": APP_SECRET,"redirect_uri": WA_REDIRECT_URI,"code": code,},).json()

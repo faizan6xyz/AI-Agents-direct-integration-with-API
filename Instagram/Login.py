@@ -8,16 +8,18 @@ from datetime import datetime, timezone, timedelta
 import time 
 import authnew as au
 import Instagram.upload as uploadd
-import secrets
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 app = Flask(__name__)
+serializer = URLSafeTimedSerializer(app.secret_key)
 IG_APP_ID = os.getenv("IG_APP_ID")
 IG_APP_SECRET = os.getenv("IG_APP_SECRET")
 IG_REDIRECT_URI = os.getenv("IG_REDIRECT_URI")
 mail = os.environ.get("email")
 passw = os.environ.get("pass")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+STATE_MAX_AGE = 600  # seconds
 TABLE_NAME = "Instagram"
 SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,"
 
@@ -28,12 +30,12 @@ def check_user_id(uuser_id):
         return False
     return True
 
-def _validate_int(name: str, value) -> bool:
+def _validate_int( value) -> bool:
     if not isinstance(value, int) or isinstance(value, bool):
         return False
     return True
 
-def _coerce_int(name: str, value):
+def _coerce_int( value):
     if value is None:
         return None
     try:
@@ -81,9 +83,7 @@ def instagram_login():
         return jsonify({"error": "user_id is required"}), 400
     if not check_user_id(user_id):
         return jsonify({"error": "invalid user id"}), 400
-    state = secrets.token_urlsafe(24)
-    expire = datetime.now(timezone.utc) + timedelta(minutes=10)
-    dbimp.update_rows(TABLE_NAME, {"State": state, "Expire_state": expire.isoformat()}, filters={"id": user_id})
+    state = serializer.dumps(user_id)
     params = {"client_id": IG_APP_ID, "redirect_uri": IG_REDIRECT_URI, "scope": SCOPE, "response_type": "code", "state": state}
     auth_url = "https://www.instagram.com/oauth/authorize?" + urlencode(params)
     return redirect(auth_url)
@@ -96,17 +96,12 @@ def instagram_callback():
         return jsonify({"error": "missing code"}), 400
     if not state:
         return jsonify({"error": "missing state"}), 400
-    rows = dbimp.select_rows(TABLE_NAME, select="id,Expire_state", filters={"State": state})
-    row = rows[0] if rows else None
-    if not row:
-        return jsonify({"error": "invalid or expired state"}), 400
-    expiry = datetime.fromisoformat(row["Expire_state"])
-    if expiry.tzinfo is None:
-        expiry = expiry.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) > expiry:
-        return jsonify({"error": "state expired"}), 400
-    user_id = row["id"]
-    dbimp.update_rows(TABLE_NAME, {"State": None, "Expire_state": None}, filters={"id": user_id})
+    try:
+        user_id = serializer.loads(state, max_age=STATE_MAX_AGE)
+    except SignatureExpired:
+        return jsonify({"error": "state expired, please reconnect"}), 400
+    except BadSignature:
+        return jsonify({"error": "invalid state"}), 400
     if not check_user_id(user_id):
         return jsonify({"error": "invalid user id"}), 400
     token_resp = requests.post("https://api.instagram.com/oauth/access_token",data={"client_id": IG_APP_ID, "client_secret": IG_APP_SECRET,"grant_type": "authorization_code","redirect_uri": IG_REDIRECT_URI,"code": code,},).json()
@@ -174,13 +169,13 @@ def story(account_id):
     duration = request.args.get("duration")
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
-    media_size = _coerce_int("media_size", media_size)
-    duration = _coerce_int("duration", duration)
+    media_size = _coerce_int( media_size)
+    duration = _coerce_int( duration)
     if media_size is None or duration is None:
         return jsonify({"success": False, "message": "Unable to post story. due to duration / media size int value"}), 400
     try:
-        _validate_int("media_size", media_size)
-        _validate_int("duration", duration)
+        _validate_int( media_size)
+        _validate_int( duration)
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
     video_type = str(is_video).strip().lower() == "true"
@@ -204,11 +199,11 @@ def photo(account_id):
     caption = request.args.get("caption", "")
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
-    media_size = _coerce_int("media_size", media_size)
+    media_size = _coerce_int( media_size)
     if media_size is None:
         return jsonify({"success": False, "message": "Unable to post photo. due media size int value"}), 400
     try:
-        _validate_int("media_size", media_size)
+        _validate_int( media_size)
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
     publish_now = str(publish).strip().lower() == "true"
@@ -236,17 +231,17 @@ def video(account_id):
     duration = request.args.get("duration")
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
-    media_size = _coerce_int("media_size", media_size)
-    duration = _coerce_int("duration", duration)
-    width = _coerce_int("width", width)
-    height = _coerce_int("height", height)
+    media_size = _coerce_int( media_size)
+    duration = _coerce_int( duration)
+    width = _coerce_int( width)
+    height = _coerce_int( height)
     if None in (media_size, duration, width, height):
         return jsonify({"success": False, "message": "Unable to post video. due to media size / duration / width / height is not int"}), 400
     try:
-        _validate_int("media_size", media_size)
-        _validate_int("duration", duration)
-        _validate_int("width", width)
-        _validate_int("height", height)
+        _validate_int( media_size)
+        _validate_int( duration)
+        _validate_int( width)
+        _validate_int( height)
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
     publish_now = str(publish).strip().lower() == "true"
@@ -277,10 +272,10 @@ def carousel(account_id):
     if not (len(media_urls) == len(is_video) == len(media_size) == len(media_duration)):
         return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration must all be the same length"}), 400
     is_videoo = [str(p).strip().lower() == "true" for p in is_video]
-    media_sizee = [_coerce_int(f"media_size[{i}]", p) for i, p in enumerate(media_size)]
+    media_sizee = [_coerce_int( p) for i, p in enumerate(media_size)]
     if any(v is None for v in media_sizee):
         return jsonify({"success": False, "message": "one or more media_size values are not valid ints"}), 400
-    media_durationn = [_coerce_int(f"media_duration[{i}]", p) for i, p in enumerate(media_duration)]
+    media_durationn = [_coerce_int( p) for i, p in enumerate(media_duration)]
     if any(v is None for v in media_durationn):
         return jsonify({"success": False, "message": "one or more media_duration values are not valid ints"}), 400
     publish_now = str(publish).strip().lower() == "true"
