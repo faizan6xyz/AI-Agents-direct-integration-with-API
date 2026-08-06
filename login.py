@@ -66,14 +66,14 @@ def details():
         return jsonify({"status": False, "reason": tokench["reason"]}), 401
     user_id = tokench["user_id"]
     name = request.args.get("name")
-    gmail = request.args.get("Gmail")
+    gmail = request.args.get("gmail")
     phone = request.args.get("phone")
     address = request.args.get("address")
     profession = request.args.get("profession")
     if not name or not gmail or not address or not phone:
         return jsonify({"status": False, "reason": "name, gmail, phone, and address are all required",}), 400
     try:
-        dbimp.update_rows("users", {"name": name, "Phone_number": phone, "Address": address, "Gmail": gmail, "Profession": profession, },{"user_id": user_id},)
+        dbimp.update_rows("users", {"Name": name, "Phone_number": phone, "Address": address, "Gmail": gmail, "Profession": profession, },{"user_id": user_id},)
     except Exception as e:
         return jsonify({"status": True, "Statusdb": False, "detail": str(e)}), 500
     return jsonify({"status": True, "Statusdb": True}), 200

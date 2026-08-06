@@ -38,13 +38,13 @@ def process(token):
     if not user_id or not time or not sign :
         return {"status" : False, "reason" : "user_id,time,sign of them is missing"}
     tok = dbimp.select_rows("users", select="Token", filters={"user_id":user_id})[0]
-    if not tok["Token"] or tok["Token"] == token :
+    if not tok or tok == token :
         return {"status" : False , "reason" : "token mismatch"}
     if datetime.now(timezone.utc) > datetime.fromisoformat(time) :
         time = datetime.now(timezone.utc) + timedelta(hours=3)
         token_new = jsonspoof(user_id=user_id , timestamp=time)
-        update = dbimp.update_rows("users" , {"token":token_new},{"user_id":user_id})
+        update = dbimp.update_rows("users" , {"Token":token_new},{"user_id":user_id})
         if not update:
             return "unable to update"
-        return token_new
+        return {"status" : True , "token" : token_new , "user_id":user_id }
     return {"status" : True , "token" : token , "user_id":user_id }

@@ -8,5 +8,8 @@ when the user wnats to use it , the user gets token and the token + other imp in
 
 create filter on those whihc oyu send email when you send email , 
 
-curl -X POST "http://127.0.0.1:5000/login?email=faizankhankharakman@gmail.com&password=Nightshine@2006"
+curl -G "http://127.0.0.1:5000/details?token=NDUxZDhiNTgtNDU3NS00YjdiLTkxNTgtY2IzOWRjM2FlZDFl.MjAyNi0wOC0wNiAwMTozNzo1My42NjU0MjYrMDA6MDA=.NDUxZDhiNTgtNDU3NS00YjdiLTkxNTgtY2IzOWRjM2FlZDFlKyt4YllOMkh3YWMtLTIwMjYtMDgtMDYgMDE6Mzc6NTMuNjY1NDI2KzAwOjAw&name=faizan&gmail=faizankhankharakman@gmail.com&phone=7827874793&address=newdelhi&profession=dev"
+
 python3.10 -m gunicorn --bind 0.0.0.0:5000 login:app
+
+curl -X POST "http://127.0.0.1:5000/login?email=faizankhankharakman@gmail.com&password=Nightshine@2006"
