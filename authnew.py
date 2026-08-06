@@ -38,7 +38,7 @@ def process(token):
     if not user_id or not time or not sign :
         return {"status" : False, "reason" : "user_id,time,sign of them is missing"}
     tok = dbimp.select_rows("users", select="Token", filters={"user_id":user_id})[0]
-    if not tok or tok == token :
+    if not tok["Token"] or tok["Token"] == token :
         return {"status" : False , "reason" : "token mismatch"}
     if datetime.now(timezone.utc) > datetime.fromisoformat(time) :
         time = datetime.now(timezone.utc) + timedelta(hours=3)

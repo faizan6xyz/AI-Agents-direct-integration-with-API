@@ -23,10 +23,15 @@ def login():
         res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
         if res.user is None:
             return jsonify({"error": "invalid credentials"}), 401
-        token = dbimp.select_rows("users" , select="Token", filters={"user_id":res.user.id})[0]
-        return jsonify({"user_id": res.user.id, "Token":token["Token"]}), 200
     except Exception as e:
         return jsonify({"error": "invalid credentials", "detail": str(e)}), 401
+    try:
+        rows = dbimp.select_rows("users", select="Token", filters={"user_id": res.user.id})
+    except Exception as e:
+        return jsonify({"error": "failed to fetch user record", "detail": str(e)}), 500
+    if not rows:
+        return jsonify({"error": "user record not found"}), 500
+    return jsonify({"user_id": res.user.id, "Token": rows[0]["Token"]}), 200
 
 @app.route("/signup", methods=["POST"])
 def signup():
@@ -41,16 +46,16 @@ def signup():
     if res.user is None:
         return jsonify({"message": "signup started, check email to confirm"}), 202
     created_at = datetime.now(timezone.utc).isoformat()
+    token = au.jsonspoof(user_id=res.user.id, timestamp=created_at)
     try:
-        insert = dbimp.insert_rows("users", {"user_id": res.user.id, "created_at": created_at})
+        insert = dbimp.insert_rows("users", { "user_id": res.user.id, "created_at": created_at, "Token": token, })
     except Exception as e:
         insert = None
         insert_error = str(e)
     else:
         insert_error = None
-    token = au.jsonspoof(user_id=res.user.id, timestamp=created_at)
     if not insert:
-        return jsonify({ "Token": token, "Statusdb": False, "detail": insert_error, }), 200
+        return jsonify({ "Token": token, "Statusdb": False, "detail": insert_error, }), 200.
     return jsonify({"Token": token, "Statusdb": True, "next": "/details"}), 200
 
 @app.route("/details", methods=["GET"])
@@ -66,9 +71,9 @@ def details():
     address = request.args.get("address")
     profession = request.args.get("profession")
     if not name or not gmail or not address or not phone:
-        return jsonify({"status": False,"reason": "name, gmail, phone, and address are all required",}), 400
+        return jsonify({"status": False, "reason": "name, gmail, phone, and address are all required",}), 400
     try:
-        dbimp.update_rows("users",{"name": name, "Phone_number": phone , "Address": address,"Gmail": gmail, "Profession": profession, },{"user_id": user_id},)
+        dbimp.update_rows("users", {"name": name, "Phone_number": phone, "Address": address, "Gmail": gmail, "Profession": profession, },{"user_id": user_id},)
     except Exception as e:
         return jsonify({"status": True, "Statusdb": False, "detail": str(e)}), 500
     return jsonify({"status": True, "Statusdb": True}), 200
