@@ -74,7 +74,7 @@ def get_authenticated_access_token(account_id):
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(user_id, access_token)
-    return access_token, user_id, None
+    return access_token, None
 
 @app.route("/auth/instagram/login")
 def instagram_login():
@@ -126,7 +126,7 @@ def instagram_callback():
 
 @app.route("/instagram/posts/<account_id>")
 def get_instagram_posts(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     fields = "id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count"
     url = "https://graph.instagram.com/me/media"
@@ -143,7 +143,7 @@ def get_instagram_posts(account_id):
 
 @app.route("/instagram/comments/<account_id>/<media_id>")
 def get_instagram_comments(account_id, media_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     fields = "id,text,username,timestamp,like_count"
     url = f"https://graph.instagram.com/{media_id}/comments"
@@ -160,7 +160,7 @@ def get_instagram_comments(account_id, media_id):
 
 @app.route("/instagram/upload/<account_id>/story", methods=["POST"])
 def story(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     media_url = request.args.get("media_url")
     is_video = request.args.get("is_video")
@@ -191,7 +191,7 @@ def story(account_id):
 
 @app.route("/instagram/upload/<account_id>/photo", methods=["POST"])
 def photo(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     media_url = request.args.get("media_url")
     media_size = request.args.get("media_size")
@@ -218,7 +218,7 @@ def photo(account_id):
 
 @app.route("/instagram/upload/<account_id>/video", methods=["POST"])
 def video(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     media_url = request.args.get("media_url")
     cover_url = request.args.get("cover_url")  # optional now, only valid for reels
@@ -259,7 +259,7 @@ def video(account_id):
  
 @app.route("/instagram/upload/<account_id>/carousel", methods=["POST"])
 def carousel(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     publish = request.args.get("publish")
     caption = request.args.get("caption", "")
@@ -290,7 +290,7 @@ def carousel(account_id):
     
 @app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
 def insight(account_id, media_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     try:
         result = uploadd.get_media_insights(access_token=access_token, media_id=media_id)
@@ -303,7 +303,7 @@ def insight(account_id, media_id):
     
 @app.route("/instagram/comments/reply/batch/<account_id>", methods=["POST"])
 def reply_to_comments_batch(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     data = request.get_json(silent=True) or {}
     replies = data.get("replies")  # expects [{"comment_id": "...", "message": "..."}, ...]
@@ -327,7 +327,7 @@ def reply_to_comments_batch(account_id):
 
 @app.route("/instagram/send-message/<account_id>", methods=["POST"])
 def send_instagram_message(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     body = request.get_json(silent=True) or {}
     recipient_id = body.get("recipient_id")
@@ -341,7 +341,7 @@ def send_instagram_message(account_id):
 
 @app.route("/instagram/followers/<account_id>")
 def get_followers_count_route(account_id):
-    access_token, user_id, err = get_authenticated_access_token(account_id)
+    access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     result = uploadd.get_follower_count(account_id, access_token)
     if not result["success"]:
