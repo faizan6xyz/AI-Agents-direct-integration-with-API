@@ -61,7 +61,7 @@ def get_authenticated_access_token(account_id):
     user_id = tokench['user_id']
     if not check_user_id(user_id):
         return None, None, (jsonify({"error": "invalid user id"}), 401)
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"id": user_id, "Account_id": account_id})
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire", filters={"Account_id": account_id})
     if not rows:
         return None, None, (jsonify({"error": "no instagram account linked"}), 404)
     row = rows[0]

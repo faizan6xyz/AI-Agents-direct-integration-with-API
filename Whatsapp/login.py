@@ -130,7 +130,7 @@ def test_send():
     account_id = request.args.get("account_id")
     if not user_id or not account_id:
         return jsonify({"error": "'user_id' and 'account_id' are required"}), 400
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire,Account_id", filters={"id": user_id, "Account_id": account_id},)
+    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire,Account_id", filters={"Account_id": account_id},)
     if not rows:
         return jsonify({"error": "no whatsapp account linked"}), 404
     row = rows[0]
