@@ -1,13 +1,12 @@
 import database.UserDB as dbimp
-import pickle
 from datetime import datetime
-import os , re , time , base64 , pickle , logging , mimetypes , json
+import os , re , time , base64 , mimetypes , json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from typing import Any, Optional
@@ -21,10 +20,12 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE_NAME = "Gmail"
+import logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("gmail_client")
 Clientid = os.environ.get("client_id")
 Clientsec = os.environ.get("client_secrect")
-logger = logging.getLogger("gmail_client")
+GMAIL_REDIRECT_URI = os.environ.get("GMAIL_REDIRECT_URI")
 GMAIL_SCOPES = os.environ.get("GMAIL_SCOPES")
 if not GMAIL_SCOPES or not GMAIL_SCOPES.strip():
     raise EnvironmentError("GMAIL_SCOPES environment variable is not set or empty.")
@@ -32,7 +33,6 @@ cleaned = [scope.strip() for scope in GMAIL_SCOPES.split(",") if scope.strip()]
 SCOPES = [s.strip(' []"') for s in cleaned]
 if not SCOPES:
     raise EnvironmentError("GMAIL_SCOPES did not contain any valid scopes.")
-CLIENT_SECRET_PATH = 'Gmail/ss.json'
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 MAX_TOTAL_SEND_BYTES = 25 * 1024 * 1024
 MAX_RESULTS_CAP = 500
@@ -43,34 +43,34 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2
 RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503}
 ALLOWED_ATTACHMENT_EXTENSIONS = { '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.ppt', '.pptx', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.mp3', }
+
+def build_flow():
+    return Flow.from_client_config({"web": { "client_id": Clientid, "client_secret": Clientsec, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token", "redirect_uris": [GMAIL_REDIRECT_URI], }}, scopes=SCOPES, redirect_uri=GMAIL_REDIRECT_URI)
+
+def save_tokens(user_id, creds, email_addr=None):
+    payload = {"Access_token": creds.token, "Refresh_token": creds.refresh_token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat()}
+    if email_addr:
+        payload["Email"] = email_addr
+    rows = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": user_id})
+    if rows:
+        dbimp.update_rows(TABLE_NAME, payload, filters={"id": user_id})
+    else:
+        dbimp.insert_rows(TABLE_NAME, {"id": user_id, **payload})
+
 def get_service(user_id):
-    if not os.path.exists(CLIENT_SECRET_PATH):
-        raise FileNotFoundError(f"Client secret file not found at '{CLIENT_SECRET_PATH}'. Download it from Google Cloud Console and place it there.")
-    if os.path.getsize(CLIENT_SECRET_PATH) == 0:
-        raise ValueError(f"Client secret file at '{CLIENT_SECRET_PATH}' is empty.")
-    with open(CLIENT_SECRET_PATH, 'r') as f:
-        client_secrets = json.load(f)
     rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})
     row = rows[0] if rows else None
-    creds = None
-    if row:
-        creds = Credentials(token=row["Access_token"], refresh_token=row["Refresh_token"],token_uri="https://oauth2.googleapis.com/token",client_id=client_secrets["installed"]["client_id"], client_secret=client_secrets["installed"]["client_secret"],scopes=SCOPES,  )
-        if row.get("Token_expire"):
-            creds.expiry = datetime.fromisoformat(row["Token_expire"])
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    if not row or not row.get("Access_token"):
+        return None
+    creds = Credentials(token=row["Access_token"], refresh_token=row["Refresh_token"], token_uri="https://oauth2.googleapis.com/token", client_id=Clientid, client_secret=Clientsec, scopes=SCOPES)
+    if row.get("Token_expire"):
+        creds.expiry = datetime.fromisoformat(row["Token_expire"])
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            dbimp.update_rows( TABLE_NAME,{"Access_token": creds.token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat()}, filters={"id": user_id},)
+            save_tokens(user_id, creds)
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_PATH, SCOPES)
-            creds = flow.run_local_server(port=0)
-            service = build('gmail', 'v1', credentials=creds)
-            mail_add = service.users().getProfile(userId='me').execute()['emailAddress']
-            payload = {"Access_token": creds.token, "Refresh_token": creds.refresh_token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat(),"Email": mail_add, }
-            if row:
-                dbimp.update_rows(TABLE_NAME, payload, filters={"id": user_id})
-            else:
-                dbimp.insert_rows(TABLE_NAME, {"id": user_id, **payload})
+            return None
     if set(SCOPES) - set(getattr(creds, 'scopes', None) or SCOPES):
         logger.warning("Stored credentials may not cover all requested scopes.")
     return build('gmail', 'v1', credentials=creds)
@@ -328,12 +328,3 @@ def list_labels(service):
 def create_label(service, name, list_visibility='labelShow', label_visibility='labelShow'):
     body = {'name': name,'labelListVisibility': list_visibility,'messageListVisibility': label_visibility,}
     return service.users().labels().create(userId='me', body=body).execute()
-
-if __name__ == "__main__":
-    service = get_service()
-    list_messages(service, query='is:unread', max_results=10)
-    
-    
-    
-# using the filter for the adding the incoming mail into the label 
-# seeing the messages every 24 hours for every incoming mails instead of the webhook

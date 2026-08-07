@@ -3,11 +3,13 @@ import re
 import logging
 from functools import wraps
 from werkzeug.utils import secure_filename
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify ,redirect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import Gmail.Read_mails as gc  # rename to match your actual module filename
 import authnew as au
+from googleapiclient.discovery import build
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gmail_api")
@@ -18,6 +20,9 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_ATTACHMENT_MB * MAX_ATTACHMENTS * 1024 * 
 ALLOWED_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.doc', '.docx', '.xlsx', '.csv', '.txt', '.zip'}
 UPLOAD_ROOT = os.path.abspath('uploads')
 ATTACH_ROOT = os.path.abspath('attachments')
+app.secret_key = os.environ["FLASK_SECRET_KEY"]
+serializer = URLSafeTimedSerializer(app.secret_key)
+STATE_MAX_AGE = 600  # seconds
 MESSAGE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{5,50}$')
 USER_ID_RE = re.compile(r'^[a-zA-Z0-9_.@-]{1,100}$')
 LABEL_NAME_RE = re.compile(r'^[\w\s/.-]{1,100}$')
@@ -38,10 +43,9 @@ def require_api_key(f):
 def get_valid_user_id():
     token = request.args.get("token")
     tokench = au.process(token=token)
-    if not tokench["status"] :
-        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    if not tokench["status"]:
+        return None
     user_id = tokench['user_id']
-
     if not user_id or not USER_ID_RE.match(user_id):
         return None
     return user_id
@@ -53,6 +57,40 @@ def safe_error(e, status=400):
 def is_allowed_file(filename):
     ext = os.path.splitext(filename)[1].lower()
     return ext in ALLOWED_EXTENSIONS
+
+@app.route("/connect-gmail")
+def connect_gmail():
+    token = request.args.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"] :
+        return jsonify({"status": "failed" , "reason": tokench["reason"]})
+    user_id = tokench['user_id']
+    state = serializer.dumps(user_id)
+    flow = gc.build_flow()
+    auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent", state=state)
+    return redirect(auth_url)
+
+@app.route("/oauth/gmail/callback")
+def gmail_oauth_callback():
+    state = request.args.get("state")
+    code = request.args.get("code")
+    if not code:
+        return jsonify({"error": "missing code"}), 400
+    if not state:
+        return jsonify({"error": "missing state"}), 400
+    try:
+        user_id = serializer.loads(state, max_age=STATE_MAX_AGE)
+    except SignatureExpired:
+        return jsonify({"error": "state expired, please reconnect"}), 400
+    except BadSignature:
+        return jsonify({"error": "invalid state"}), 400
+    flow = gc.build_flow()
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+    service = build('gmail', 'v1', credentials=creds)
+    email_addr = service.users().getProfile(userId='me').execute()['emailAddress']
+    gc.save_tokens(user_id, creds, email_addr=email_addr)
+    return jsonify({"status": "connected", "email": email_addr})
 
 @app.route('/messages', methods=['GET'])
 @limiter.limit("30 per minute")
@@ -70,6 +108,8 @@ def list_messages():
     all_pages = request.args.get('all_pages', 'false').lower() == 'true'
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         messages = gc.list_messages(service, query=query, max_results=max_results, all_pages=all_pages, verbose=False)
         return jsonify({"count": len(messages), "messages": messages})
     except Exception as e:
@@ -91,6 +131,8 @@ def send_message():
         return jsonify({"error": "a valid 'to' email is required"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         result = gc.send_message(service, to, subject, body_text, name)
         return jsonify({"id": result.get('id'), "threadId": result.get('threadId')})
     except Exception as e:
@@ -126,6 +168,8 @@ def send_message_with_attachments():
             f.save(path)
             saved_paths.append(path)
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         result = gc.send_message_with_attachments(service, to, subject, body_text, saved_paths, name=name, allowed_dir=upload_dir)
         return jsonify({"id": result.get('id'), "threadId": result.get('threadId')})
     except Exception as e:
@@ -144,6 +188,8 @@ def mark_as_read(message_id):
         return jsonify({"error": "valid 'user_id' and message_id are required"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         result = gc.mark_as_read(service, message_id)
         return jsonify(result)
     except Exception as e:
@@ -158,6 +204,8 @@ def mark_as_unread(message_id):
         return jsonify({"error": "valid 'user_id' and message_id are required"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         result = gc.mark_as_unread(service, message_id)
         return jsonify(result)
     except Exception as e:
@@ -175,6 +223,8 @@ def download_attachments(message_id):
         return jsonify({"error": "invalid output path"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         saved = gc.download_attachments(service, message_id, out_dir=out_dir)
         return jsonify({"saved_files": saved})
     except Exception as e:
@@ -189,6 +239,8 @@ def list_filters():
         return jsonify({"error": "valid 'user_id' is required"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         return jsonify(gc.list_filters(service))
     except Exception as e:
         return safe_error(e)
@@ -208,6 +260,8 @@ def create_filter():
         return jsonify({"error": "'criteria' and 'action' must be objects"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         result = gc.create_filter(service, criteria, action) # this reutrn the filter_id which is the result["id"]
         return jsonify(result)
     except Exception as e:
@@ -222,6 +276,8 @@ def delete_filter(filter_id):
         return jsonify({"error": "valid 'user_id' and filter_id are required"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         gc.delete_filter(service, filter_id)
         return jsonify({"deleted": filter_id})
     except Exception as e:
@@ -236,6 +292,8 @@ def list_labels():
         return jsonify({"error": "valid 'user_id' is required"}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         return jsonify(gc.list_labels(service))
     except Exception as e:
         return safe_error(e)
@@ -259,6 +317,8 @@ def create_label():
         label_visibility = 'labelShow'
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         result = gc.create_label(service, name, list_visibility, label_visibility)
         return jsonify(result)
     except Exception as e:
@@ -283,6 +343,8 @@ def send_multiple_message():
         return jsonify({"error": "'messages' must be a non-empty list."}), 400
     try:
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
     except Exception as e:
         return jsonify({"error": str(e)}), 400
     results = []
@@ -332,6 +394,8 @@ def send_multiple_message_with_attachments():
             f.save(path)
             saved_paths.append(path)
         service = gc.get_service(user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         results = []
         for to in recipients:
             try:
