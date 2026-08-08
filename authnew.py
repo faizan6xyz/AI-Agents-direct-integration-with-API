@@ -50,7 +50,7 @@ def process(token):
         return {"status" : True , "token" : token_new , "user_id":user_id }
     return {"status" : True , "token" : token , "user_id":user_id }
 
-def paidcheck(user_id):
+def paidcheck(user_id):  # this will be use din the analytics and locks the premuim features 
     if not user_id :
         return False
     rows = dbimp.select_rows("users" , select="Payment_check" , filters={"user_id":user_id})

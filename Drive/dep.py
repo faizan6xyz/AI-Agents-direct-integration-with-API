@@ -1,5 +1,8 @@
-import os
+
 import io
+import pandas as pd
+from googleapiclient.http import MediaIoBaseDownload
+import os
 from datetime import datetime
 from flask import Flask, request, redirect, jsonify, send_file
 from google_auth_oauthlib.flow import Flow
@@ -45,6 +48,7 @@ def load_tokens(user_id):
     connected = row["Connected"]
     return {"access_token": fernet.decrypt(access_token).decode(), "refresh_token": fernet.decrypt(refresh_token).decode(), "token_expiry": fernet.decrypt(expiry).decode() , "connected": bool(connected) }
 
+
 def mark_disconnected(user_id):
     dbimp.update_rows(table_name , {"Connected" : 0 } , {"id" : user_id} )
 
@@ -86,11 +90,11 @@ def authenticate_request():
 
 def authenticate_and_get_service():
     user_id, err = authenticate_request()
-    if err: return None, None, err
+    if err: return None,  err
     service = get_drive_service(user_id)
     if not service:
-        return None, None, (jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401)
-    return service, user_id, None
+        return None, (jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401)
+    return service, None
 
 def get_or_create_folder(service, folder_name, parent_id=None):
     query = (f"name='{folder_name}' "
@@ -147,7 +151,7 @@ def oauth_callback():
 
 @app.route("/drive/files")
 def list_files():
-    service, user_id, err = authenticate_and_get_service()
+    service, err = authenticate_and_get_service()
     if err: return err
     all_files = []
     page_token = None
@@ -161,7 +165,7 @@ def list_files():
 
 @app.route("/drive/setup-folders", methods=["POST"])
 def setup_folders():
-    service, user_id, err = authenticate_and_get_service()
+    service, err = authenticate_and_get_service()
     if err: return err
     try:
         structure = create_platform_folder_structure(service)
@@ -171,7 +175,7 @@ def setup_folders():
 
 @app.route("/drive/upload", methods=["POST"])
 def upload_file():
-    service, user_id, err = authenticate_and_get_service()
+    service, err = authenticate_and_get_service()
     if err: return err
     if "file" not in request.files:
         return jsonify({"error": "file required (form-data field: file)"}), 400
@@ -208,7 +212,7 @@ def upload_file():
 
 @app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
-    service, user_id, err = authenticate_and_get_service()
+    service, err = authenticate_and_get_service()
     if err: return err
     file_id = request.args.get("file_id")
     if not file_id:
@@ -222,9 +226,34 @@ def delete_file():
         return jsonify({"error": "drive error", "details": str(e)}), status
     return jsonify({ "file_id": file_id, "status": "deleted"})
 
+@app.route("/drive/anal/<file_id>")
+def read_csv_from_drive(file_id):
+    if not file_id : 
+        return jsonify({"error" : "File_id is required "}) , 500
+    service, err = authenticate_and_get_service()
+    if err:
+        return err
+    try:
+        request = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer,request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+    except Exception as e:
+        return jsonify({ "error": "Failed to read CSV from Google Drive", "details": str(e)}), 500
+    try :
+        df = pd.read_csv(buffer)
+    except pd.errors.EmptyDataError:
+        return jsonify({ "error": "The CSV file is empty" }), 400
+    except pd.errors.ParserError:
+        return jsonify({"error": "The file is not a valid CSV" }), 400
+    return jsonify({ "CSV": df.to_dict(orient="records")}) , 200
+    
 @app.route("/drive/metadata")
 def get_drive_file_metadata():
-    service, user_id, err = authenticate_and_get_service()
+    service, err = authenticate_and_get_service()
     if err: return err
     file_id = request.args.get("file_id")
     if not file_id:
