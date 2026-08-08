@@ -23,7 +23,7 @@ def jp(token):
     token = token.split(".")
     user_id = base64.b64decode(token[0]).decode('utf-8') if token[0] else False
     time = base64.b64decode(token[1]).decode('utf-8') if token[1] else False
-    signature = base64.b64decode(token[2]).decode('utf-8') if token[2] else False
+    signature = base64.b64decode(token[2]).decode('utf-8') if token[2] else False   
     if not user_id or not time or not signature :
         return False
     return {"user" : user_id , "time" : time , "sign" : signature }
@@ -37,7 +37,8 @@ def process(token):
     sign = decd["sign"] if decd["sign"] else False
     if not user_id or not time or not sign :
         return {"status" : False, "reason" : "user_id,time,sign of them is missing"}
-    tok = dbimp.select_rows("users", select="Token", filters={"user_id":user_id})[0]
+    toks = dbimp.select_rows("users", select="Token", filters={"user_id":user_id})
+    tok = toks[0] if toks[0] else None
     if not tok or tok == token :
         return {"status" : False , "reason" : "token mismatch"}
     if datetime.now(timezone.utc) > datetime.fromisoformat(time) :
@@ -48,3 +49,14 @@ def process(token):
             return "unable to update"
         return {"status" : True , "token" : token_new , "user_id":user_id }
     return {"status" : True , "token" : token , "user_id":user_id }
+
+def paidcheck(user_id):
+    if not user_id :
+        return False
+    rows = dbimp.select_rows("users" , select="Payment_check" , filters={"user_id":user_id})
+    row = rows[0] if rows[0] else None
+    pay = str(row["Payment_check"]).strip().lower() == "false"
+    if pay :
+        return False
+    return True
+
