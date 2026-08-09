@@ -249,7 +249,7 @@ def read_csv_from_drive(file_id):
         return jsonify({ "error": "The CSV file is empty" }), 400
     except pd.errors.ParserError:
         return jsonify({"error": "The file is not a valid CSV" }), 400
-    return jsonify({ "CSV": df.to_dict(orient="records")}) , 200
+    return jsonify({ "CSV": df}) , 200
     
 @app.route("/drive/metadata")
 def get_drive_file_metadata():
