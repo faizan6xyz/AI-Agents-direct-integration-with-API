@@ -4,7 +4,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import os
 import base64
 
-# approach to portect the analytics report integrity : we use the hashing for the protection of the (checks the file if chnages using the sha256) and add some noise (timestampz) with the hashing , creating a unquie identifier and then encrypt that identifier with my own key (AES) , then use the key while analysis to decrypt the identifier , if the decryption goes smoothly then the file isn't chnaged
+# approach to portect the analytics report integrity : we use the hashing for the protection of the (checks the file if chnages using the sha256) and add some noise (timestampz) with the hashing , creating a unquie identifier and then encrypt that identifier with my own key (AES) , then use the key while analysis to decrypt the identifier , if the decryption goes smoothly then the file isn't chnaged . chack one and then reutrn the data , this check last for the session of 10 minutes means within that 10 min there cant be another request to fetch the data for analysis , which protect the server from the multiple attack
+
+# other option for this can be using the metadata of the report file to se if anyone change , but it require comparison to the last metadata , which is an headache for the server .
 
 def sha256_of_text(text):
     h = hashlib.sha256()
