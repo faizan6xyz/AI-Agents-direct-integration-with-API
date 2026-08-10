@@ -289,11 +289,13 @@ def carousel(account_id):
         return jsonify({"success": False, "message": "Unable to post carousel."}), 500
     
 @app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
-def insight(account_id, media_id):
-    access_token, err = get_authenticated_access_token(account_id)
+def insight(account_id, media_id ):
+    access_token, err = get_authenticated_access_token(account_id)  
+    is_story = request.args.get("is_story")
+    is_story = str(story).strip().lower() == "true" if is_story else False
     if err: return err
     try:
-        result = uploadd.get_media_insights(access_token=access_token, media_id=media_id)
+        result = uploadd.get_media_insights(access_token=access_token, media_id=media_id , story = is_story)
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to fetch insight: {e}"}), 500
     if result["success"]:

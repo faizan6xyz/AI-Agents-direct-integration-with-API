@@ -223,8 +223,8 @@ def post_story( access_token: str, ig_user_id: str, media_size: int, media_url: 
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
 
-def get_media_insights(media_id, access_token):
-    metrics=("views", "reach", "likes", "comments", "saved", "shares")
+def get_media_insights(media_id, access_token, story ):
+    metrics = ("views","reach", "replies","shares","navigation","profile_activity") if story else metrics = ("views","reach","likes","comments","saved","shares","total_interactions","profile_activity","follows")    
     if not access_token:
         return {"success": False, "data": None, "error": f"missing access_token for {media_id}"}
     url = f"{BASE_URL}/{media_id}/insights"
