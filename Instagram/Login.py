@@ -272,10 +272,10 @@ def carousel(account_id):
     if not (len(media_urls) == len(is_video) == len(media_size) == len(media_duration)):
         return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration must all be the same length"}), 400
     is_videoo = [str(p).strip().lower() == "true" for p in is_video]
-    media_sizee = [_coerce_int( p) for i, p in enumerate(media_size)]
+    media_sizee = [_coerce_int( p) for p in media_size]
     if any(v is None for v in media_sizee):
         return jsonify({"success": False, "message": "one or more media_size values are not valid ints"}), 400
-    media_durationn = [_coerce_int( p) for i, p in enumerate(media_duration)]
+    media_durationn = [_coerce_int( p) for p in media_duration]
     if any(v is None for v in media_durationn):
         return jsonify({"success": False, "message": "one or more media_duration values are not valid ints"}), 400
     publish_now = str(publish).strip().lower() == "true"
