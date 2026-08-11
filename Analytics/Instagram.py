@@ -9,7 +9,7 @@ df = pd.read_csv('hi.csv')
 def coversion(df: pd.DataFrame):   # initial step for the analyis , always first and compulasay
     if df is None or df.empty : 
         return "empty analytics"
-    df = df.groupby("id")[["views", "comments", "likes", "shares"]].mean()
+    df = df.groupby("id").mean()
     df["comment_rate"] = (df["comments"] / df["views"])
     df["like_rate"] = (df["likes"] / df["views"])
     df["share_rate"] = (df["shares"] / df["views"])
@@ -83,12 +83,23 @@ def filtering(df: pd.DataFrame, ids: list[int] | None = None) :   # 2nd step aft
         df = df[df["id"].astype(int).isin(ids)]
     return df
 
-# metrics = ("id" , "views","reach", "replies","shares","navigation","profile_activity", "hour", ) for the short term data collection , eg 24 hours
-
+# metrics = ("id","views", "likes","reach", "replies","shares","navigation","profile_activity", "hour", "follows") for the short term data collection = 24 hours , and most comments for the post is in the replies 
 
 def best_posting_hour(df: pd.DataFrame):  
     if df is None or df.empty:
         return "empty analytics"
     df = df.copy()
-    df["engagement"] = df["likes"] + df["comments"] + df["shares"]
-    return df.groupby("hour")["engagement"].mean().sort_values(ascending=False)
+    return df.groupby("hour")["total_engagement"].mean().sort_values(ascending=False)
+
+def coversion_stories(df: pd.DataFrame):   
+    if df is None or df.empty : 
+        return "empty analytics"
+    df = df.groupby("id").mean()
+    df["comment_rate"] = (df["replies"] / df["views"])
+    df["like_rate"] = (df["likes"] / df["views"])
+    df["share_rate"] = (df["shares"] / df["views"])
+    return df
+
+
+
+# virality_score , public_engagement , public_love_score , follower_gain , new_reach for the stories also 
