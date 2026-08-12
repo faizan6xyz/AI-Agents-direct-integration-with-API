@@ -303,61 +303,11 @@ html, body {
   margin-bottom: 70px;
 }
 
-.card--quote {
-  align-self: flex-start;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(6px);
-  width: 700px;
-  height: 200px;
-  opacity: 0.7;
-}
-
-.card__quote {
-  margin: 0 0 14px;
-  text-shadow: #6FA8FF;
-  font-weight: 1000;
-  font-size: 27.5px;
-  line-height: 1.5;
-  color:black;
-}
-
-.card__person {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 30px;
-}
-
-.card__avatar {
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  background: var(--blue-3);
-  color: var(--white);
-  font-size: 11px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.card__name {
-  font-size: 19.5px;
-  font-weight: 1000;
-  color:black;
-  padding: 3px;
-}
-
-.card__role {
-  font-size: 16px;
-  color: grey;
-}
-
 .card--chart {
   align-self: center;
   width: 100%;
-  width: 1200px;
+  width: 800px;
+  height: 680px
 }
 
 .card__chart-head {
@@ -370,7 +320,7 @@ html, body {
 .card__chart-icon { font-size: 20px; }
 
 .card__pill {
-  font-size: 21px;
+  font-size: 15px;
   padding: 4px 10px;
   border-radius: 999px;
   background: var(--field-bg);
@@ -378,7 +328,7 @@ html, body {
 }
 
 .card__stat {
-  font-size: 30px;
+  font-size: 20px;
   font-weight: 700;
   margin-bottom: 16px;
   margin-top: 10px;
@@ -394,8 +344,8 @@ html, body {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  height: 590px;
-  width :1100px;
+  height: 490px;
+  width :750px;
 }
 
 .text {
@@ -406,7 +356,7 @@ html, body {
   align-self: center;
   font-weight: 600;
   margin-top: 30px;
-  font-size: 30px;
+  font-size: 25px;
   opacity: 0.8;
 }
 
@@ -415,7 +365,7 @@ html, body {
   height: var(--h);
   border-radius: 6px 6px 2px 2px;
   background: var(--blue-2);
-  margin: 8px;
+  margin: 20px;
 }
 
 .bar--peak { background: var(--blue-deep); }
