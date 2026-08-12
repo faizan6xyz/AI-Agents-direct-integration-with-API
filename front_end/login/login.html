@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Log in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="stage">
+
+    <!-- Left: login form -->
+    <main class="panel">
+      <div class="panel__inner">
+
+        <div class="brand">
+          <!-- <span class="brand__mark">◆</span> -->
+          <span class="brand__name">Leo Social</span>
+        </div>
+
+        <h1 class="heading">Welcome back</h1>
+        <p class="subheading">What's the plan for today?</p>
+
+        <div class="oauth-row">
+          <button type="button" class="oauth-btn" id="google-login">
+            <svg class="oauth-icon" viewBox="0 0 18 18" aria-hidden="true">
+              <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/>
+              <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.55-1.84.86-3.06.86-2.36 0-4.36-1.6-5.08-3.74H.94v2.33A9 9 0 0 0 9 18z"/>
+              <path fill="#FBBC05" d="M3.92 10.68A5.4 5.4 0 0 1 3.64 9c0-.58.1-1.15.28-1.68V4.99H.94A9 9 0 0 0 0 9c0 1.45.35 2.83.94 4.01l2.98-2.33z"/>
+              <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.57-2.57C13.46.9 11.43 0 9 0A9 9 0 0 0 .94 4.99l2.98 2.33C4.64 5.18 6.64 3.58 9 3.58z"/>
+            </svg>
+            <span>Google</span>
+          </button>
+
+          <button type="button" class="oauth-btn" id="facebook-login">
+            <svg class="oauth-icon" viewBox="0 0 18 18" aria-hidden="true">
+              <path fill="#1877F2" d="M18 9a9 9 0 1 0-10.4 8.89v-6.29H5.3V9h2.3V6.98c0-2.27 1.35-3.53 3.43-3.53.97 0 1.98.17 1.98.17v2.18h-1.12c-1.1 0-1.44.68-1.44 1.39V9h2.46l-.39 2.6h-2.07v6.29A9 9 0 0 0 18 9z"/>
+            </svg>
+            <span>Facebook</span>
+          </button>
+        </div>
+
+        <div class="divider"><span>or continue with email</span></div>
+
+        <p class="form-status" id="status" role="status" aria-live="polite"></p>
+
+        <form id="login-form" class="form" novalidate>
+          <div class="field">
+            <label for="email">Email *</label>
+            <input type="email" id="email" name="email" autocomplete="email" required placeholder="Enter your email" />
+          </div>
+
+          <div class="field">
+            <label for="password">Password *</label>
+            <input type="password" id="password" name="password" autocomplete="current-password" required placeholder="Enter your password" minlength="8" />
+          </div>
+
+          <div class="row-between">
+            <label class="checkbox">
+              <input type="checkbox" id="remember" name="remember" />
+              <span>Remember me</span>
+            </label>
+            <a href="forgot-password.html" class="link">Forgot password?</a>
+          </div>
+
+          <button type="submit" class="submit" id="login-submit">
+            <span class="submit__text">Log in</span>
+            <span class="submit__spinner" aria-hidden="true"></span>
+          </button>
+        </form>
+
+        <p class="signup-line">Don't have an account? <a href="signup.html" class="link link--strong">Sign up</a></p>
+
+        <p class="terms">
+          By logging in, you agree to our
+          <a href="terms-and-conditions.html" class="link">Terms &amp; Conditions</a> and
+          <a href="privacy-policy.html" class="link">Privacy Policy</a>.
+        </p>
+
+      </div>
+    </main>
+
+    <!-- Right: analytics panel (hidden on small screens) -->
+    <aside class="showcase" aria-hidden="true">
+
+      <div class="card card--quote">
+        <p class="card__quote">Someone Leveled Up </p>
+        <div class="card__person">
+          <span class="card__avatar">SJ</span>
+          <div>
+            <div class="card__name">Sarah Johnson</div>
+            <div class="card__role">CEO at Agile Solutions</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card card--chart">
+        <div class="card__chart-head">
+          <span class="card__chart-icon">📊</span>
+          <span class="card__pill">Last month</span>
+        </div>
+        <div class="card__stat">
+          +84.32% <span class="card__stat-arrow">↗</span>
+        </div>
+        <div class="bars">
+          <div class="bar" style="--h: 45%"></div>
+          <div class="bar" style="--h: 58%"></div>
+          <div class="bar bar--peak" style="--h: 82%"></div>
+          <div class="bar" style="--h: 68%"></div>
+          <div class="bar" style="--h: 28%"></div>
+          <div class="bar bar--peak" style="--h: 96%"></div>
+        </div>
+      <div class="text">
+        Monthly Growth 
+      </div>
+      </div>
+
+    </aside>
+
+  </div>
+
+<script src="script.js"></script>
+</body>
+</html>
