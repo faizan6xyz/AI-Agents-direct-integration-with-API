@@ -4,6 +4,8 @@
 //   profile_activity, follows, time }
 // ---------------------------------------------------------------------------
 
+// => is used for defining the function like d(x) => return "hi"
+
 function isEmpty(data) {
   return data == null || data.length === 0;
 }
