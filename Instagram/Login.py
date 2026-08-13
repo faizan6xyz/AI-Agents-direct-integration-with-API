@@ -12,6 +12,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY")
 serializer = URLSafeTimedSerializer(app.secret_key)
 IG_APP_ID = os.getenv("IG_APP_ID")
 IG_APP_SECRET = os.getenv("IG_APP_SECRET")
