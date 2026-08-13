@@ -15,8 +15,9 @@ app = Flask(__name__)
 
 @app.route("/login", methods=["POST"])
 def login():
-    mail = request.args.get("email")
-    passw = request.args.get("password")
+    body = request.get_json(silent=True) or {}
+    mail = body.get("email")
+    passw = body.get("password")
     if not mail or not passw:
         return jsonify({"error": "email and password are required"}), 400
     try:
@@ -35,8 +36,9 @@ def login():
 
 @app.route("/signup", methods=["POST"])
 def signup():
-    mail = request.args.get("email")
-    passw = request.args.get("password")
+    body = request.get_json(silent=True) or {}
+    mail = body.get("email")
+    passw = body.get("password")
     if not mail or not passw:
         return jsonify({"error": "email and password are required"}), 400
     try:
@@ -47,33 +49,50 @@ def signup():
         return jsonify({"message": "signup started, check email to confirm"}), 202
     created_at = datetime.now(timezone.utc).isoformat()
     token = au.jsonspoof(user_id=res.user.id, timestamp=created_at)
+    insert_error = None
     try:
-        insert = dbimp.insert_rows("users", { "user_id": res.user.id, "created_at": created_at, "Token": token, })
+        insert = dbimp.insert_rows("users", {"user_id": res.user.id, "created_at": created_at, "Token": token},)
     except Exception as e:
         insert = None
         insert_error = str(e)
-    else:
-        insert_error = None
     if not insert:
-        return jsonify({ "Token": token, "Statusdb": False, "detail": insert_error, }), 200.
+        return jsonify({"Token": token, "Statusdb": False, "detail": insert_error}), 200
     return jsonify({"Token": token, "Statusdb": True, "next": "/details"}), 200
 
-@app.route("/details", methods=["GET"])
+@app.route("/details", methods=["POST"])
 def details():
+    body = request.get_json(silent=True) or {}
+    token = body.get("token")
+    tokench = au.process(token=token)
+    if not tokench["status"]:
+        return jsonify({"status": False, "reason": tokench["reason"]}), 401
+    user_id = tokench["user_id"]
+    name = body.get("name")
+    gmail = body.get("gmail")
+    phone = body.get("phone")
+    address = body.get("address")
+    profession = body.get("profession")
+    if not name or not gmail or not address or not phone:
+        return jsonify({"status": False, "reason": "name, gmail, phone, and address are all required",}), 400
+    try:
+        dbimp.update_rows("users",{"Name": name,"Phone_number": phone,"Address": address,"Gmail": gmail,"Profession": profession,},{"user_id": user_id},)
+    except Exception as e:
+        return jsonify({"status": True, "Statusdb": False, "detail": str(e)}), 500
+    return jsonify({"status": True, "Statusdb": True}), 200
+
+@app.route("/check", methods=["GET"])
+def check_status():
     token = request.args.get("token")
     tokench = au.process(token=token)
     if not tokench["status"]:
         return jsonify({"status": False, "reason": tokench["reason"]}), 401
     user_id = tokench["user_id"]
-    name = request.args.get("name")
-    gmail = request.args.get("gmail")
-    phone = request.args.get("phone")
-    address = request.args.get("address")
-    profession = request.args.get("profession")
-    if not name or not gmail or not address or not phone:
-        return jsonify({"status": False, "reason": "name, gmail, phone, and address are all required",}), 400
+    if not user_id:
+        return jsonify({"status": False, "reason": "Invalid user_id"}), 401
     try:
-        dbimp.update_rows("users", {"Name": name, "Phone_number": phone, "Address": address, "Gmail": gmail, "Profession": profession, },{"user_id": user_id},)
-    except Exception as e:
-        return jsonify({"status": True, "Statusdb": False, "detail": str(e)}), 500
-    return jsonify({"status": True, "Statusdb": True}), 200
+        data = dbimp.select_rows("users", select="user_id", filters={"user_id": user_id})
+    except Exception:
+        return jsonify({"status": False, "reason": "unable to check db"}), 401
+    if not data:
+        return jsonify({"status": False, "reason": "user not found"}), 404
+    return jsonify({"status": True, "reason": "verified"}), 200
