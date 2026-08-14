@@ -3,19 +3,58 @@ from typing import Any, Optional
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
+import sqlite3
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-mail = os.environ.get("email")
-passw = os.environ.get("pass")
+DB = "users.db"
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TABLE_NAME = "users"
-try:
-    res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
-except Exception:
-    res = supabase.auth.sign_up({"email": mail, "password": passw})
+# supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# try:
+#     res = supabase.auth.sign_in_with_password({"email": mail, "password": passw})
+# except Exception:
+#     res = supabase.auth.sign_up({"email": mail, "password": passw})
+
+
+def get_conn():
+    return sqlite3.connect(DB)
+
+def init_db():
+    conn = get_conn()
+    conn.execute(""" CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    token TEXT )""")
+    conn.commit()
+    conn.close()
+
+def insert_user(email, password, token=None):
+    conn = get_conn()
+    conn.execute("INSERT INTO users (email, password, token) VALUES (?, ?, ?)", (email, password, token))
+    conn.commit()
+    conn.close()
+
+def get_user_by_token(token):
+    conn = get_conn()
+    cur = conn.execute("SELECT email, password FROM users WHERE token = ?",(token,))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+def update_token_by_token(token, new_token):
+    conn = get_conn()
+    conn.execute("UPDATE users SET token = ? WHERE token = ?", (token, new_token))
+    conn.commit()
+    conn.close()
+
+def update_token_by_mail(email, token):
+    conn = get_conn()
+    conn.execute("UPDATE users SET token = ? WHERE email = ?", (token, email))
+    conn.commit()
+    conn.close()
 
 def _apply_filters(query, filters: dict[str, Any]):
     for column, condition in filters.items():
@@ -50,23 +89,47 @@ def _apply_filters(query, filters: dict[str, Any]):
             query = query.eq(column, condition)
     return query
 
-def insert_rows(table_name: str, data: dict[str, Any] | list[dict[str, Any]]) -> list[dict]:
+def insert_rows( token, table_name: str, data: dict[str, Any] | list[dict[str, Any]]) -> list[dict]:
+    det = get_user_by_token(token=token)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        res = supabase.auth.sign_in_with_password({"email": det[0], "password": det[1]})
+    except Exception:
+        res = supabase.auth.sign_up({"email": det[0], "password": det[1]})
     response = supabase.table(table_name).insert(data).execute()
     return response.data
 
-def update_rows(table_name: str, updates: dict[str, Any], filters: dict[str, Any]) -> list[dict]:
+def update_rows(token, table_name: str, updates: dict[str, Any], filters: dict[str, Any]) -> list[dict]:
+    det = get_user_by_token(token=token)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        res = supabase.auth.sign_in_with_password({"email": det[0], "password": det[1]})
+    except Exception:
+        res = supabase.auth.sign_up({"email": det[0], "password": det[1]})
     query = supabase.table(table_name).update(updates)
     query = _apply_filters(query, filters)
     response = query.execute()
     return response.data
 
-def delete_rows(table_name: str, filters: dict[str, Any]) -> list[dict]:
+def delete_rows(token, table_name: str, filters: dict[str, Any]) -> list[dict]:
+    det = get_user_by_token(token=token)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        res = supabase.auth.sign_in_with_password({"email": det[0], "password": det[1]})
+    except Exception:
+        res = supabase.auth.sign_up({"email": det[0], "password": det[1]})
     query = supabase.table(table_name).delete()
     query = _apply_filters(query, filters)
     response = query.execute()
     return response.data
 
-def select_rows( table_name: str, filters: Optional[dict[str, Any]] = None, select: str = "*", order_by: Optional[str] = None, ascending: bool = True, limit: Optional[int] = None,) -> list[dict]:
+def select_rows( token, table_name: str, filters: Optional[dict[str, Any]] = None, select: str = "*", order_by: Optional[str] = None, ascending: bool = True, limit: Optional[int] = None,) -> list[dict]:
+    det = get_user_by_token(token=token)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        res = supabase.auth.sign_in_with_password({"email": det[0], "password": det[1]})
+    except Exception:
+        res = supabase.auth.sign_up({"email": det[0], "password": det[1]})
     query = supabase.table(table_name).select(select)
     if filters:
         query = _apply_filters(query, filters)
@@ -78,13 +141,12 @@ def select_rows( table_name: str, filters: Optional[dict[str, Any]] = None, sele
     return response.data
  
 if __name__ == "__main__":
-    print("\nFetching all rows...")
-    all_rows = select_rows("users")
-    for row in all_rows:
-        print(row)
+    init_db()
+    token='NDUxZDhiNTgtNDU3NS00YjdiLTkxNTgtY2IzOWRjM2FlZDFl.MjAyNi0wOC0xNCAwMjozOToyMi40NjEwOTIrMDA6MDA=.NDUxZDhiNTgtNDU3NS00YjdiLTkxNTgtY2IzOWRjM2FlZDFlMWFTQzRRa0xPOWs0YjIwMjYtMDgtMTQgMDI6Mzk6MjIuNDYxMDkyKzAwOjAw'
+    print(select_rows(token=token,table_name="users",filters={"user_id":"451d8b58-4575-4b7b-9158-cb39dc3aed1e"}))
 
 """F
-# --- INSERT ---
+# --- INSERT ---    
 # Add a single user
 insert_rows("users", {"name": "Ayesha", "email": "ayesha@example.com", "role": "admin"})
 # Bulk insert multiple rows at once (e.g. importing contacts)

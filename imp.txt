@@ -13,3 +13,7 @@ curl -G "http://127.0.0.1:5000/details?token=NDUxZDhiNTgtNDU3NS00YjdiLTkxNTgtY2I
 python3.10 -m gunicorn --bind 0.0.0.0:5000 login:app
 
 curl -X POST "http://127.0.0.1:5000/login?email=faizankhankharakman@gmail.com&password=Nightshine@2006"
+
+
+
+cloudflared tunnel --url http://localhost:5000

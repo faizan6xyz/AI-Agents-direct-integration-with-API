@@ -10,6 +10,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from typing import Any, Optional
+import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -68,7 +69,13 @@ def get_service(user_id):
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            save_tokens(user_id, creds)
+            try:
+                resp = requests.get(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/profile",headers={"Authorization": f"Bearer {creds.token}"},).json()
+                email = resp.get("emailAddress")
+            except Exception:
+                email = None
+            save_tokens(user_id, creds, email_addr=email)  # save refreshed token regardless
         else:
             return None
     if set(SCOPES) - set(getattr(creds, 'scopes', None) or SCOPES):

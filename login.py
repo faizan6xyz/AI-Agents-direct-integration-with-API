@@ -26,8 +26,10 @@ def login():
             return jsonify({"error": "invalid credentials"}), 401
     except Exception as e:
         return jsonify({"error": "invalid credentials", "detail": str(e)}), 401
+    created_at = datetime.now(timezone.utc).isoformat()
+    token = au.jsonspoof(user_id=res.user.id, timestamp=created_at)
     try:
-        rows = dbimp.select_rows("users", select="Token", filters={"user_id": res.user.id})
+        rows = dbimp.select_rows(token ,"users", select="Token", filters={"user_id": res.user.id})
     except Exception as e:
         return jsonify({"error": "failed to fetch user record", "detail": str(e)}), 500
     if not rows:
@@ -49,9 +51,10 @@ def signup():
         return jsonify({"message": "signup started, check email to confirm"}), 202
     created_at = datetime.now(timezone.utc).isoformat()
     token = au.jsonspoof(user_id=res.user.id, timestamp=created_at)
+    dbimp.insert_user(email=mail,password=passw,token=token)
     insert_error = None
     try:
-        insert = dbimp.insert_rows("users", {"user_id": res.user.id, "created_at": created_at, "Token": token},)
+        insert = dbimp.insert_rows(token , "users", {"user_id": res.user.id, "created_at": created_at, "Token": token},)
     except Exception as e:
         insert = None
         insert_error = str(e)
@@ -75,7 +78,7 @@ def details():
     if not name or not gmail or not address or not phone:
         return jsonify({"status": False, "reason": "name, gmail, phone, and address are all required",}), 400
     try:
-        dbimp.update_rows("users",{"Name": name,"Phone_number": phone,"Address": address,"Gmail": gmail,"Profession": profession,},{"user_id": user_id},)
+        dbimp.update_rows(tokench["token"] ,"users",{"Name": name,"Phone_number": phone,"Address": address,"Gmail": gmail,"Profession": profession,},{"user_id": user_id},)
     except Exception as e:
         return jsonify({"status": True, "Statusdb": False, "detail": str(e)}), 500
     return jsonify({"status": True, "Statusdb": True}), 200
@@ -90,7 +93,7 @@ def check_status():
     if not user_id:
         return jsonify({"status": False, "reason": "Invalid user_id"}), 401
     try:
-        data = dbimp.select_rows("users", select="user_id", filters={"user_id": user_id})
+        data = dbimp.select_rows(tokench["toke"],"users", select="user_id", filters={"user_id": user_id})
     except Exception:
         return jsonify({"status": False, "reason": "unable to check db"}), 401
     if not data:

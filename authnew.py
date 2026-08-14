@@ -15,7 +15,7 @@ def random_text(limit):
 def jsonspoof(user_id, timestamp):
     user_id1 = base64.b64encode(user_id.encode("utf-8")).decode("utf-8")
     time1 = base64.b64encode(str(timestamp).encode("utf-8")).decode("utf-8")
-    signature = f"{user_id}++{random_text(6)}--{timestamp}"
+    signature = f"{user_id}1a{random_text(6)}4b{timestamp}"
     signature1 = base64.b64encode(signature.encode("utf-8")).decode("utf-8")
     return f"{user_id1}.{time1}.{signature1}"
 
@@ -37,26 +37,32 @@ def process(token):
     sign = decd["sign"] if decd["sign"] else False
     if not user_id or not time or not sign :
         return {"status" : False, "reason" : "user_id,time,sign of them is missing"}
-    toks = dbimp.select_rows("users", select="Token", filters={"user_id":user_id})
+    toks = dbimp.select_rows(token, "users", select="Token", filters={"user_id":user_id})
     tok = toks[0] if toks[0] else None
     if not tok or tok == token :
         return {"status" : False , "reason" : "token mismatch"}
     if datetime.now(timezone.utc) > datetime.fromisoformat(time) :
-        time = datetime.now(timezone.utc) + timedelta(hours=3)
+        time = datetime.now(timezone.utc) + timedelta(hours=1)
         token_new = jsonspoof(user_id=user_id , timestamp=time)
-        update = dbimp.update_rows("users" , {"Token":token_new},{"user_id":user_id})
+        dbimp.update_token_by_token(token=token,new_token=token_new)
+        update = dbimp.update_rows(token_new,"users" , {"Token":token_new},{"user_id":user_id})
         if not update:
             return "unable to update"
         return {"status" : True , "token" : token_new , "user_id":user_id }
     return {"status" : True , "token" : token , "user_id":user_id }
 
-def paidcheck(user_id):  # this will be use din the analytics and locks the premuim features 
+def paidcheck(token , user_id):  # this will be use din the analytics and locks the premuim features 
     if not user_id :
         return False
-    rows = dbimp.select_rows("users" , select="Payment_check" , filters={"user_id":user_id})
+    rows = dbimp.select_rows(token , "users" , select="Payment_check" , filters={"user_id":user_id})
     row = rows[0] if rows[0] else None
     pay = str(row["Payment_check"]).strip().lower() == "false"
     if pay :
         return False
     return True
 
+
+time = datetime.now(timezone.utc) + timedelta(hours=1)
+x = '451d8b58-4575-4b7b-9158-cb39dc3aed1e'
+print(jsonspoof(user_id=x,timestamp=time))
+print(jp(jsonspoof(user_id=x,timestamp=time)))
