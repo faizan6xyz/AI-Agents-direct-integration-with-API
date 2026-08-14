@@ -48,18 +48,18 @@ ALLOWED_ATTACHMENT_EXTENSIONS = { '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.cs
 def build_flow():
     return Flow.from_client_config({"web": { "client_id": Clientid, "client_secret": Clientsec, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token", "redirect_uris": [GMAIL_REDIRECT_URI], }}, scopes=SCOPES, redirect_uri=GMAIL_REDIRECT_URI)
 
-def save_tokens(user_id, creds, email_addr=None):
+def save_tokens(token, user_id, creds, email_addr=None):
     payload = {"Access_token": creds.token, "Refresh_token": creds.refresh_token, "Token_expire": creds.expiry.isoformat(), "Timestamp": datetime.now(timezone.utc).isoformat()}
     if email_addr:
         payload["Email"] = email_addr
-    rows = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": user_id})
+    rows = dbimp.select_rows(token,TABLE_NAME, select="id", filters={"id": user_id})
     if rows:
-        dbimp.update_rows(TABLE_NAME, payload, filters={"id": user_id})
+        dbimp.update_rows(token,TABLE_NAME, payload, filters={"id": user_id})
     else:
-        dbimp.insert_rows(TABLE_NAME, {"id": user_id, **payload})
+        dbimp.insert_rows(token,TABLE_NAME, {"id": user_id, **payload})
 
-def get_service(user_id):
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})
+def get_service(token,user_id):
+    rows = dbimp.select_rows(token,TABLE_NAME, select="Access_token,Refresh_token,Token_expire", filters={"id": user_id})
     row = rows[0] if rows else None
     if not row or not row.get("Access_token"):
         return None
@@ -75,7 +75,7 @@ def get_service(user_id):
                 email = resp.get("emailAddress")
             except Exception:
                 email = None
-            save_tokens(user_id, creds, email_addr=email)  # save refreshed token regardless
+            save_tokens(token ,user_id, creds, email_addr=email)  # save refreshed token regardless
         else:
             return None
     if set(SCOPES) - set(getattr(creds, 'scopes', None) or SCOPES):

@@ -9,18 +9,20 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 import tempfile
+from datetime import datetime, timezone, timedelta
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from google.auth.exceptions import RefreshError, TransportError, GoogleAuthError
 from googleapiclient.discovery import build
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from cryptography.fernet import Fernet
+import requests
 import database.UserDB as dbimp
 import authnew as au
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
-CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
+CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]  
 REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 fernet = Fernet(os.environ["FERNET_KEY"].encode())
@@ -28,17 +30,19 @@ serializer = URLSafeTimedSerializer(app.secret_key)
 STATE_MAX_AGE = 600  # seconds, state link expires after 10 min
 table_name = "Drive" 
 PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
+BASE_URL = ""
 SUBFOLDERS = ["photos", "videos", "pdf", "documents", "analytics" ]
 
-def save_tokens(user_id, access_token, refresh_token, expiry):
-    dbimp.insert_rows(table_name, {"id" : user_id , "Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token" : fernet.encrypt(refresh_token.encode()) , "Token_expire": fernet.encrypt(expiry.isoformat().encode()), "Connected" : 1 , "Scopes" : SCOPES})
+def save_tokens(token, user_id, access_token, refresh_token, expiry):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    dbimp.insert_rows(token,table_name, {"id" : user_id , "Timestamp":timestamp ,"Access_token" : fernet.encrypt(access_token.encode()).decode(), "Refresh_token" : fernet.encrypt(refresh_token.encode()).decode(), "Token_expire": fernet.encrypt(expiry.encode()).decode(), "Connected" : 1 , "Scopes" : SCOPES})
     
 
-def Update_token(user_id, access_token, refresh_token, expiry):
-    dbimp.update_rows(table_name, {"Access_token" : fernet.encrypt(access_token.encode()) , "Refresh_token": fernet.encrypt(refresh_token.encode()) , "Token_expire": fernet.encrypt(expiry.isoformat().encode()) }, {"id" : user_id})
+def Update_token(token , user_id, access_token, refresh_token, expiry):
+    dbimp.update_rows(token , table_name, {"Access_token" : fernet.encrypt(access_token.encode()).decode(), "Refresh_token": fernet.encrypt(refresh_token.encode()).decode(), "Token_expire": fernet.encrypt(expiry.isoformat().encode()).decode()}, {"id" : user_id})
 
-def load_tokens(user_id):
-    rows = dbimp.select_rows(table_name , filters= {"id" : user_id})
+def load_tokens(token,user_id):
+    rows = dbimp.select_rows(token,table_name , filters= {"id" : user_id})
     row = rows[0] if rows else None
     if not row :    
         return None
@@ -46,17 +50,17 @@ def load_tokens(user_id):
     refresh_token = row["Refresh_token"]
     expiry = row["Token_expire"]
     connected = row["Connected"]
-    return {"access_token": fernet.decrypt(access_token).decode(), "refresh_token": fernet.decrypt(refresh_token).decode(), "token_expiry": fernet.decrypt(expiry).decode() , "connected": bool(connected) }
+    return {"access_token": fernet.decrypt(access_token.encode()).decode(), "refresh_token": fernet.decrypt(refresh_token.encode()).decode(), "token_expiry": fernet.decrypt(expiry.encode()).decode() , "connected": bool(connected) }
 
 
-def mark_disconnected(user_id):
-    dbimp.update_rows(table_name , {"Connected" : 0 } , {"id" : user_id} )
+def mark_disconnected(token,user_id):
+    dbimp.update_rows(token,table_name , {"Connected" : 0 } , {"id" : user_id} )
 
 def build_flow():
     return Flow.from_client_config({"web": { "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token", "redirect_uris": [REDIRECT_URI], }}, scopes=SCOPES,redirect_uri=REDIRECT_URI)
 
-def get_drive_service(user_id):
-    tokens = load_tokens(user_id)
+def get_drive_service(token,user_id):
+    tokens = load_tokens(token,user_id)
     if not tokens or not tokens["connected"]:
         return None
     expiry = None
@@ -66,9 +70,12 @@ def get_drive_service(user_id):
     if creds.expired:
         try:
             creds.refresh(GoogleRequest())
-            Update_token(user_id, creds.token, creds.refresh_token, creds.expiry)
-        except RefreshError:    
-            mark_disconnected(user_id)
+            Update_token(token ,user_id, creds.token, creds.refresh_token, creds.expiry)
+        except RefreshError:
+            try:
+                mark_disconnected(token, user_id)
+            except Exception:
+                pass
             return None
         except TransportError as e: # network-level failure talking to Google — don't disconnect, just fail this call
             return None
@@ -88,10 +95,10 @@ def authenticate_request():
         return None, (jsonify({"error": "user_id required"}), 400)
     return user_id, None
 
-def authenticate_and_get_service():
+def authenticate_and_get_service(token):
     user_id, err = authenticate_request()
     if err: return None,  err
-    service = get_drive_service(user_id)
+    service = get_drive_service(token,user_id)
     if not service:
         return None, (jsonify({"error": "not connected", "connect_url": f"/connect-drive?user_id={user_id}"}), 401)
     return service, None
@@ -134,7 +141,7 @@ def connect_drive():
     auth_url, _ = flow.authorization_url( access_type="offline", prompt="consent", state=signed_state )
     return redirect(auth_url)
 
-@app.route("/oauth/callback")
+@app.route("/auth/drivecallback")
 def oauth_callback():
     signed_state = request.args.get("state")
     try:
@@ -144,14 +151,48 @@ def oauth_callback():
     except BadSignature:
         return jsonify({"error": "invalid state"}), 400
     flow = build_flow()
-    flow.fetch_token(code=request.args["code"])
+    code = request.args.get("code")
+    if not code:
+        return jsonify({"error": "missing code", "details": request.args.get("error")}), 400
+    flow.fetch_token(code=code)
     creds = flow.credentials
-    save_tokens(user_id, creds.token, creds.refresh_token, creds.expiry)
-    return jsonify({"status": "connected", "user_id": user_id})
+    expire = creds.expiry.isoformat()
+    expiry_ts = datetime.now(timezone.utc) + timedelta(hours=1)
+    token = au.jsonspoof(user_id=user_id, timestamp=expiry_ts)
+    payload = {"user_id": user_id,"access": creds.token,"expire": expire,"refresh": creds.refresh_token ,"token":token}
+    signed_payload = serializer.dumps(payload)
+    resp = requests.post(f"{BASE_URL}/auth/drive/callbackshi", json={"data": signed_payload}, timeout=5)
+    return (resp.content, resp.status_code, resp.headers.items())
+
+@app.route("/auth/drive/callbackshi", methods=["POST"])
+def oauth_callbac():
+    raw = request.get_json(silent=True) or {}
+    try:
+        data = serializer.loads(raw.get("data"), max_age=STATE_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return jsonify({"status": False, "error": "invalid or expired payload"}), 403
+    token = data.get("token")
+    user_id = data.get("user_id")
+    expire = data.get("expire")
+    refresh = data.get("refresh")
+    access = data.get("access")
+    if not token or not user_id or not expire or not access or not refresh :
+        return jsonify({"status":False}),403
+    try:
+        datetime.fromisoformat(expire)
+    except ValueError:
+        return jsonify({"status": False, "error": "invalid expire format"}), 400
+    try:
+        save_tokens(token, user_id, access, refresh, expire)
+    except Exception as e:
+        return jsonify({"status": False, "error": str(e)}), 403
+    return jsonify({"status":True}),200
+    
 
 @app.route("/drive/files")
 def list_files():
-    service, err = authenticate_and_get_service()
+    token= request.args.get("token")
+    service, err = authenticate_and_get_service(token)
     if err: return err
     all_files = []
     page_token = None
@@ -165,7 +206,8 @@ def list_files():
 
 @app.route("/drive/setup-folders", methods=["POST"])
 def setup_folders():
-    service, err = authenticate_and_get_service()
+    token= request.args.get("token")
+    service, err = authenticate_and_get_service(token)
     if err: return err
     try:
         structure = create_platform_folder_structure(service)
@@ -175,7 +217,8 @@ def setup_folders():
 
 @app.route("/drive/upload", methods=["POST"])
 def upload_file():
-    service, err = authenticate_and_get_service()
+    token= request.args.get("token")
+    service, err = authenticate_and_get_service(token)
     if err: return err
     if "file" not in request.files:
         return jsonify({"error": "file required (form-data field: file)"}), 400
@@ -212,7 +255,8 @@ def upload_file():
 
 @app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
-    service, err = authenticate_and_get_service()
+    token= request.args.get("token")
+    service, err = authenticate_and_get_service(token)
     if err: return err
     file_id = request.args.get("file_id")
     if not file_id:
@@ -228,15 +272,16 @@ def delete_file():
 
 @app.route("/drive/anal/<file_id>")
 def read_csv_from_drive(file_id):
+    token= request.args.get("token")
     if not file_id : 
         return jsonify({"error" : "File_id is required "}) , 500
-    service, err = authenticate_and_get_service()
+    service, err = authenticate_and_get_service(token)
     if err:
         return err
     try:
-        request = service.files().get_media(fileId=file_id)
+        drive_request = service.files().get_media(fileId=file_id)
         buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer,request)
+        downloader = MediaIoBaseDownload(buffer, drive_request)
         done = False
         while not done:
             _, done = downloader.next_chunk()
@@ -249,11 +294,12 @@ def read_csv_from_drive(file_id):
         return jsonify({ "error": "The CSV file is empty" }), 400
     except pd.errors.ParserError:
         return jsonify({"error": "The file is not a valid CSV" }), 400
-    return jsonify({ "CSV": df}) , 200
-    
+    return jsonify({"CSV": df.to_dict(orient="records")}), 200    
+
 @app.route("/drive/metadata")
 def get_drive_file_metadata():
-    service, err = authenticate_and_get_service()
+    token= request.args.get("token")
+    service, err = authenticate_and_get_service(token)
     if err: return err
     file_id = request.args.get("file_id")
     if not file_id:

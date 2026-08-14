@@ -23,7 +23,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 STATE_MAX_AGE = 600  # seconds
 TABLE_NAME = "Instagram"
 SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments"
-
+BASE_URL = ""
 def check_user_id(token, uuser_id):
     rows = dbimp.select_rows(token, TABLE_NAME, select="id", filters={"id": uuser_id})
     exist = rows[0] if rows else None
@@ -31,10 +31,9 @@ def check_user_id(token, uuser_id):
         return False
     return True
 
-def _validate_int(value) -> bool:
+def _validate_int(value, field_name="value") -> None:
     if not isinstance(value, int) or isinstance(value, bool):
-        return False
-    return True
+        raise ValueError(f"{field_name} must be an integer, got {type(value).__name__}: {value!r}")
 
 def _coerce_int(value):
     if value is None:
@@ -58,24 +57,24 @@ def get_authenticated_access_token(account_id):
     token = request.args.get("token")
     tokench = au.process(token=token)
     if not tokench["status"]:
-        return None, None, (jsonify({"status": "failed", "reason": tokench["reason"]}), 200)
+        return None, (jsonify({"status": "failed", "reason": tokench["reason"]}), 200)
     user_id = tokench["user_id"]
     if not check_user_id(tokench["token"], user_id):
-        return None, None, (jsonify({"error": "invalid user id"}), 401)
+        return None, (jsonify({"error": "invalid user id"}), 401)
     rows = dbimp.select_rows(tokench["token"], TABLE_NAME, select="Access_token,Token_expire", filters={"Account_id": account_id})
     if not rows:
-        return None, None, (jsonify({"error": "no instagram account linked"}), 404)
+        return None, (jsonify({"error": "no instagram account linked"}), 404)
     row = rows[0]
     access_token = row["Access_token"]
     raw_expiry = row["Token_expire"]
     if not access_token or not raw_expiry:
-        return None, None, (jsonify({"error": "missing access_token"}), 400)
+        return None, (jsonify({"error": "missing access_token"}), 400)
     Token_expiry = datetime.fromisoformat(raw_expiry)
     if Token_expiry.tzinfo is None:
         Token_expiry = Token_expiry.replace(tzinfo=timezone.utc)
     if Token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
         access_token = refresh_token(tokench["token"], user_id, access_token)
-    return access_token, None, None
+    return access_token, None
 
 @app.route("/auth/instagram/login")
 def instagram_login():
@@ -126,12 +125,17 @@ def instagram_callback():
     timestamp = datetime.now(timezone.utc).isoformat()
     expire = expire_time.isoformat()
     payload = {"user_id": user_id,"account_id": account_id,"username": account,"expire": expire,"timestamp": timestamp,"token": token,"access": long_token,}
-    resp = requests.post("https://wives-warranty-embedded-sao.trycloudflare.com/auth/instagram/callbackshi", json=payload, timeout=5)
+    signed_payload = serializer.dumps(payload)
+    resp = requests.post(f"{BASE_URL}/auth/instagram/callbackshi", json={"data": signed_payload}, timeout=5)
     return (resp.content, resp.status_code, resp.headers.items())
 
 @app.route("/auth/instagram/callbackshi", methods=["POST"])
 def dataget():
-    data = request.get_json(silent=True) or {}
+    raw = request.get_json(silent=True) or {}
+    try:
+        data = serializer.loads(raw.get("data"), max_age=STATE_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return jsonify({"status": False, "error": "invalid or expired payload"}), 403
     token = data.get("token")
     access_token = data.get("access")
     user_id = data.get("user_id")
@@ -190,11 +194,12 @@ def get_instagram_comments(account_id, media_id):
 def story(account_id):
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
-    media_url = request.args.get("media_url")
-    is_video = request.args.get("is_video")
-    media_size = request.args.get("media_size")
-    publish = request.args.get("publish")
-    duration = request.args.get("duration")
+    data = request.get_json(silent=True) or {}
+    media_url = data.get("media_url")
+    is_video = data.get("is_video")
+    media_size = data.get("media_size")
+    publish = data.get("publish")
+    duration = data.get("duration")
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -221,10 +226,11 @@ def story(account_id):
 def photo(account_id):
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
-    media_url = request.args.get("media_url")
-    media_size = request.args.get("media_size")
-    publish = request.args.get("publish")
-    caption = request.args.get("caption", "")
+    data = request.get_json(silent=True) or {}
+    media_url = data.get("media_url")
+    media_size = data.get("media_size")
+    publish = data.get("publish")
+    caption = data.get("caption", "")
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -248,15 +254,16 @@ def photo(account_id):
 def video(account_id):
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
-    media_url = request.args.get("media_url")
-    cover_url = request.args.get("cover_url")  # optional now, only valid for reels
-    media_size = request.args.get("media_size")
-    publish = request.args.get("publish")
-    caption = request.args.get("caption", "")
-    as_reel = request.args.get("as_reel")
-    height = request.args.get("height")
-    width = request.args.get("width")
-    duration = request.args.get("duration")
+    data = request.get_json(silent=True) or {}
+    media_url = data.get("media_url")
+    cover_url = data.get("cover_url")  # optional now, only valid for reels
+    media_size = data.get("media_size")
+    publish = data.get("publish")
+    caption = data.get("caption", "")
+    as_reel = data.get("as_reel")
+    height = data.get("height")
+    width = data.get("width")
+    duration = data.get("duration")
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -289,12 +296,13 @@ def video(account_id):
 def carousel(account_id):
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
-    publish = request.args.get("publish")
-    caption = request.args.get("caption", "")
-    media_size = request.args.getlist("media_size")
-    media_duration = request.args.getlist("media_duration")
-    media_urls = request.args.getlist("media_urls")
-    is_video = request.args.getlist("is_video")
+    data = request.get_json(silent=True) or {}
+    publish = data.get("publish")
+    caption = data.get("caption", "")
+    media_size = data.get("media_size", [])
+    media_duration = data.get("media_duration", [])
+    media_urls = data.get("media_urls", [])
+    is_video = data.get("is_video", [])
     if not media_urls or not is_video or not media_size or not media_duration:
         return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration are all required"}), 400
     if not (len(media_urls) == len(is_video) == len(media_size) == len(media_duration)):
@@ -317,10 +325,12 @@ def carousel(account_id):
         return jsonify({"success": False, "message": "Unable to post carousel."}), 500
     
 @app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
-def insight(account_id, media_id ):
-    access_token, err = get_authenticated_access_token(account_id)  
+def insight(account_id, media_id):
+    access_token, err = get_authenticated_access_token(account_id)
+    if err:
+        return err
     is_story = request.args.get("is_story")
-    is_story = str(story).strip().lower() == "true" if is_story else False
+    is_story = str(is_story).strip().lower() == "true" if is_story else False
     if err: return err
     try:
         result = uploadd.get_media_insights(access_token=access_token, media_id=media_id , story = is_story)
