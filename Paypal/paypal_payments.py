@@ -10,7 +10,7 @@ import threading
 import authnew as au
 import requests
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from cryptography.hazmat.primitives import hashes
@@ -69,55 +69,55 @@ def _update_succeeded(resp) -> bool:
         return rowcount > 0
     return bool(resp)
 
-def seed_demo_cart(user_id, cart_id, plan_key):
-    rows = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"id": user_id})
+def seed_demo_cart(token,user_id, cart_id, plan_key):
+    rows = dbimp.select_rows(token,PAYPAL_TABLE, select="id", filters={"id": user_id})
     existing = rows[0] if rows else None
 
     data = {"Cart_id": cart_id, "Plan": plan_key, "Status": "CREATED", "Paid": 0}
     if existing:
-        dbimp.update_rows(PAYPAL_TABLE, data, {"id": user_id})
+        dbimp.update_rows(token,PAYPAL_TABLE, data, {"id": user_id})
     else:
         data["id"] = user_id
-        dbimp.insert_rows(PAYPAL_TABLE, data)
+        dbimp.insert_rows(token,PAYPAL_TABLE, data)
 
-def get_cart_for_user(user_id):
-    rows = dbimp.select_rows( PAYPAL_TABLE, select="id,Cart_id,Plan,Status,Paid,Paypal_order_id", filters={"id": user_id}, )
+def get_cart_for_user(token,user_id):
+    rows = dbimp.select_rows(token, PAYPAL_TABLE, select="id,Cart_id,Plan,Status,Paid,Paypal_order_id", filters={"id": user_id}, )
     row = rows[0] if rows else None
 
     return dict(row) if row else None
 
-def get_active_order_for_user(user_id):
-    row = get_cart_for_user(user_id)
+def get_active_order_for_user(token,user_id):
+    row = get_cart_for_user(token,user_id)
     if row and row.get("Paypal_order_id") and row.get("Status") in ACTIVE_ORDER_STATUSES:
         return row
     return None
 
-def get_order_for_user(user_id, paypal_order_id):
-    row = get_cart_for_user(user_id)
+def get_order_for_user(token,user_id, paypal_order_id):
+    row = get_cart_for_user(token,user_id)
     if not row or row.get("Paypal_order_id") != paypal_order_id:
         return None
     return row
 
 def get_user_id_for_order(paypal_order_id):
-    rows = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"Paypal_order_id": paypal_order_id})
+    rows = dbimp.select_rows_web(PAYPAL_TABLE, select="id", filters={"Paypal_order_id": paypal_order_id})
     row = rows[0] if rows else None
 
     return row["id"] if row else None
 
-def save_order(user_id, paypal_order_id, cart_id, plan_key) -> bool:
-    resp = dbimp.update_rows( PAYPAL_TABLE, {"Paypal_order_id": paypal_order_id,"Cart_id": cart_id,"Plan": plan_key,"Status": "CREATED","Updated_at": _now(),},{"id": user_id},)
+def save_order(token,user_id, paypal_order_id, cart_id, plan_key) -> bool:
+    resp = dbimp.update_rows(token, PAYPAL_TABLE, {"Paypal_order_id": paypal_order_id,"Cart_id": cart_id,"Plan": plan_key,"Status": "CREATED","Updated_at": _now(),},{"id": user_id},)
     return _update_succeeded(resp)
 
 def mark_order_paid(user_id, paypal_order_id) -> bool:
-    resp = dbimp.update_rows(PAYPAL_TABLE, {"Paid": 1, "Status": "COMPLETED", "Updated_at": _now()}, {"id": user_id, "Paypal_order_id": paypal_order_id, "Paid": 0},)
+    resp = dbimp.update_rows_web(PAYPAL_TABLE, {"Paid": 1, "Status": "COMPLETED", "Updated_at": _now()}, {"id": user_id, "Paypal_order_id": paypal_order_id, "Paid": 0},)
     return _update_succeeded(resp)
 
 def _hash_request(payload):
     import hashlib
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
-def get_idempotent_response(user_id, key, request_hash):
-    rows = dbimp.select_rows( VERIFY_TABLE, select="Idempotency_key,Request_hash,Response", filters={"id": user_id})
+def get_idempotent_response(token,user_id, key, request_hash):
+    rows = dbimp.select_rows( token,VERIFY_TABLE, select="Idempotency_key,Request_hash,Response", filters={"id": user_id})
     row = rows[0] if rows else None
 
     if not row or row["Idempotency_key"] != key:
@@ -127,18 +127,18 @@ def get_idempotent_response(user_id, key, request_hash):
     resp = row.get("Response")
     return (json.loads(resp) if isinstance(resp, str) else resp), False
 
-def save_idempotent_response(user_id, key, request_hash, response):
-    rows = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})
+def save_idempotent_response(token,user_id, key, request_hash, response):
+    rows = dbimp.select_rows(token,VERIFY_TABLE, select="id", filters={"id": user_id})
     existing = rows[0] if rows else None
     data = {"Idempotency_key": key, "Request_hash": request_hash, "Response": response}
     if existing:
-        dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
+        dbimp.update_rows(token,VERIFY_TABLE, data, {"id": user_id})
     else:
         data["id"] = user_id
-        dbimp.insert_rows(VERIFY_TABLE, data)
+        dbimp.insert_rows(token,VERIFY_TABLE, data)
 
 def is_duplicate_webhook_event(event_id) -> bool:
-    rows = dbimp.select_rows(VERIFY_TABLE, select="Event_id", filters={"Event_id": event_id})
+    rows = dbimp.select_rows_web(VERIFY_TABLE, select="Event_id", filters={"Event_id": event_id})
     row = rows[0] if rows else None
 
     return row is not None
@@ -146,14 +146,14 @@ def is_duplicate_webhook_event(event_id) -> bool:
 def record_webhook_event(event_id, user_id) -> bool:
     if not user_id:
         return False
-    rows = dbimp.select_rows(VERIFY_TABLE, select="id", filters={"id": user_id})
+    rows = dbimp.select_rows_web(VERIFY_TABLE, select="id", filters={"id": user_id})
     existing = rows[0] if rows else None
     data = {"Event_id": event_id, "Created_at": _now()}
     if existing:
-        dbimp.update_rows(VERIFY_TABLE, data, {"id": user_id})
+        dbimp.update_rows_web(VERIFY_TABLE, data, {"id": user_id})
     else:
         data["id"] = user_id
-        dbimp.insert_rows(VERIFY_TABLE, data)
+        dbimp.insert_rows_web(VERIFY_TABLE, data)
     return True
 
 _token_lock = threading.Lock()
@@ -246,11 +246,11 @@ def verify_webhook_signature(headers, raw_body: bytes, event: dict) -> bool:
         logger.warning("Local webhook verification failed, falling back to API: %s", e)
         return verify_webhook_signature_remote(headers, event)
 
-def logincheck(user_id):
+def logincheck(token ,user_id):
     if not user_id:
         return {"logged_in": False}
     try:
-        rows = dbimp.select_rows(PAYPAL_TABLE, select="id", filters={"id": user_id})
+        rows = dbimp.select_rows(token,PAYPAL_TABLE, select="id", filters={"id": user_id})
         found = rows[0] if rows else None
     except Exception:
         return {"logged_in": False}
@@ -275,7 +275,7 @@ def seed_cart():
         return jsonify({"error": "cart_id and user_id required"}), 400
     if plan_key not in PLAN_CATALOG:
         return jsonify({"error": "invalid_plan"}), 400
-    seed_demo_cart(user_id, cart_id, plan_key)
+    seed_demo_cart(tokench["token"],user_id, cart_id, plan_key)
     return jsonify({"seeded": True, "cart_id": cart_id})
 
 @app.route("/api/payment/create", methods=["POST"])
@@ -288,12 +288,12 @@ def create_payment():
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-    check = logincheck(user_id)
+    check = logincheck(tokench['token'],user_id)
     if not check["logged_in"] :
         return jsonify({"status": False}), 401
     if not cart_id:
         return jsonify({"error": "cart_id required"}), 400
-    cart = get_cart_for_user(user_id)
+    cart = get_cart_for_user(token['token'],user_id)
     if not cart or cart.get("Cart_id") != cart_id:
         return jsonify({"error": "cart_not_found"}), 404
     plan_key = cart.get("Plan")
@@ -305,12 +305,12 @@ def create_payment():
     idempotency_key = request.headers.get("Idempotency-Key")
     request_hash = _hash_request({"cart_id": cart_id, "user_id": user_id})
     if idempotency_key:
-        cached, mismatch = get_idempotent_response(user_id, idempotency_key, request_hash)
+        cached, mismatch = get_idempotent_response(tokench["token"],user_id, idempotency_key, request_hash)
         if mismatch:
             return jsonify({"error": "idempotency_key_reused_with_different_request"}), 409
         if cached:
             return jsonify(cached)
-    existing_order = get_active_order_for_user(user_id)
+    existing_order = get_active_order_for_user(tokench["token"],user_id)
     if existing_order:
         return jsonify({"error": "order_already_exists", "order_id": existing_order["Paypal_order_id"]}), 409
     payload = {"intent": "CAPTURE",
@@ -328,15 +328,15 @@ def create_payment():
         return jsonify({"error": "order_creation_failed"}), 502
     order = resp.json()
     approval_link = next((l["href"] for l in order["links"] if l["rel"] == "approve"), None)
-    if not save_order(user_id, order["id"], cart_id, plan_key):
+    if not save_order(tokench["token"],user_id, order["id"], cart_id, plan_key):
         logger.warning("Could not persist order %s for user %s, checking for a race", order["id"], user_id)
-        existing_order = get_active_order_for_user(user_id)
+        existing_order = get_active_order_for_user(tokench['token'],user_id)
         if existing_order:
             return jsonify({"error": "order_already_exists", "order_id": existing_order["Paypal_order_id"]}), 409
         return jsonify({"error": "order_persist_failed"}), 500
     result = {"order_id": order["id"], "approval_link": approval_link}
     if idempotency_key:
-        save_idempotent_response(user_id, idempotency_key, request_hash, result)
+        save_idempotent_response(tokench['token'],user_id, idempotency_key, request_hash, result)
     logger.info("Order created: %s for user %s", order["id"], user_id)
     return jsonify(result)
 
@@ -348,7 +348,7 @@ def payment_status(order_id):
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-    check = logincheck(user_id)
+    check = logincheck(tokench['token'],user_id)
     if not check["logged_in"] :
         return jsonify({"status": False}), 401
     order = get_order_for_user(user_id , order_id)
@@ -375,7 +375,7 @@ def capture_payment(order_id):
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-    check = logincheck(user_id)
+    check = logincheck(tokench['token'],user_id)
     if not check["logged_in"] :
         return jsonify({"status": False}), 401
     order = get_order_for_user(user_id, order_id)

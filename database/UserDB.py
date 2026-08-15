@@ -154,7 +154,29 @@ def select_rows_web( table_name: str, filters: Optional[dict[str, Any]] = None, 
         query = query.limit(limit)
     response = query.execute()
     return response.data
- 
+
+def insert_rows_web(table_name: str, data: dict[str, Any] | list[dict[str, Any]]) -> list[dict]:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    res = supabase.auth.sign_in_with_password({"email": email , "password":passw})
+    response = supabase.table(table_name).insert(data).execute()
+    return response.data
+
+def update_rows_web(table_name: str, updates: dict[str, Any], filters: dict[str, Any]) -> list[dict]:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    res = supabase.auth.sign_in_with_password({"email": email , "password":passw})    
+    query = supabase.table(table_name).update(updates)
+    query = _apply_filters(query, filters)
+    response = query.execute()
+    return response.data
+
+def delete_rows_web(table_name: str, filters: dict[str, Any]) -> list[dict]:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    res = supabase.auth.sign_in_with_password({"email": email , "password":passw})    
+    query = supabase.table(table_name).delete()
+    query = _apply_filters(query, filters)
+    response = query.execute()
+    return response.data
+
 if __name__ == "__main__":
     init_db()
     token='NDUxZDhiNTgtNDU3NS00YjdiLTkxNTgtY2IzOWRjM2FlZDFl.MjAyNi0wOC0xNCAwMjozOToyMi40NjEwOTIrMDA6MDA=.NDUxZDhiNTgtNDU3NS00YjdiLTkxNTgtY2IzOWRjM2FlZDFlMWFTQzRRa0xPOWs0YjIwMjYtMDgtMTQgMDI6Mzk6MjIuNDYxMDkyKzAwOjAw'
