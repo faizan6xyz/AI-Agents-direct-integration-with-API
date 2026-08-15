@@ -323,6 +323,23 @@ def carousel(account_id):
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post carousel."}), 500
+
+@app.route("/instagram/<account_id>/auto", methods=["POST"])
+def get_thumbnail_auto(account_id):
+    access_token, err = get_authenticated_access_token(account_id)
+    if err:
+        return err
+    media_id = request.args.get("media_id")
+    if not media_id :
+        return jsonify({"success": False, "message": "media_id and are required"}), 400
+    try:
+        results = uploadd.get_media_thumbnail(access_token=access_token, media_id=media_id)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Unable to fetch thumbnail: {e}"}), 500
+    if results["success"]:
+        return jsonify({"success": True, "data": results["data"]}), 200
+    else:
+        return jsonify({"success": False, "message": results["error"]}), 500
     
 @app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
 def insight(account_id, media_id):
@@ -331,7 +348,6 @@ def insight(account_id, media_id):
         return err
     is_story = request.args.get("is_story")
     is_story = str(is_story).strip().lower() == "true" if is_story else False
-    if err: return err
     try:
         result = uploadd.get_media_insights(access_token=access_token, media_id=media_id , story = is_story)
     except Exception as e:
