@@ -17,3 +17,11 @@ curl -X POST "http://127.0.0.1:5000/login?email=faizankhankharakman@gmail.com&pa
 
 
 cloudflared tunnel --url http://localhost:5000
+
+
+
+
+
+
+
+add the reply botton in gmail and the whatsapp for the mass analytics that they replied 

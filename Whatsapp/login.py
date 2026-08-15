@@ -120,7 +120,7 @@ def verify_webhook():
     log.warning("Webhook verification attempt failed (bad mode/verify token).")
     return "Verification failed", 403
 
-@app.route("/webhook", methods=["POST"])
+@app.route("/webhook", methods=["POST"]) # add a reply to message for ever incoming message 
 def receive_webhook_message():
     if not is_valid_signature(request):
         log.error("Rejected webhook POST: invalid or missing signature.")
@@ -145,7 +145,7 @@ def receive_webhook_message():
                         log.exception(f"Failed to process message {msg.get('id')}: {e}")
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
-    return jsonify({"status": "received"}), 200
+    return jsonify({"status": "received"}), 200 
 
 @app.route("/send-test", methods=["POST"])
 def test_send():
