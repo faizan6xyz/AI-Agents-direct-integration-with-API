@@ -1,12 +1,9 @@
-
 import io
 import pandas as pd
-from googleapiclient.http import MediaIoBaseDownload
 import os
-from datetime import datetime
 from flask import Flask, request, redirect, jsonify, send_file
 from google_auth_oauthlib.flow import Flow
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload , MediaIoBaseUpload ,MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 import tempfile
 from datetime import datetime, timezone, timedelta
@@ -29,9 +26,9 @@ fernet = Fernet(os.environ["FERNET_KEY"].encode())
 serializer = URLSafeTimedSerializer(app.secret_key)
 STATE_MAX_AGE = 600  # seconds, state link expires after 10 min
 table_name = "Drive" 
-PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
+PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin","x"]
 BASE_URL = ""
-SUBFOLDERS = ["photos", "videos", "pdf", "documents", "analytics" ]
+SUBFOLDERS = ["photos", "videos", "pdf", "documents", " " ]
 
 def save_tokens(token, user_id, access_token, refresh_token, expiry):
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -131,6 +128,30 @@ def create_platform_folder_structure(service):
             sub_id, sub_created = get_or_create_folder(service, sub, parent_id=platform_id)
             structure[platform][sub] = {"id": sub_id, "created": sub_created}
     return structure
+
+def read_csv_from_dive(file_id, token):
+    if not file_id:
+        raise ValueError("file_id is required")
+    service, err = authenticate_and_get_service(token)
+    if err:
+        raise RuntimeError(f"Authentication failed: {err}")
+    try:
+        drive_request = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, drive_request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read CSV from Google Drive: {e}")
+    try:
+        df = pd.read_csv(buffer)
+    except pd.errors.EmptyDataError:
+        raise ValueError("The CSV file is empty")
+    except pd.errors.ParserError:
+        raise ValueError("The file is not a valid CSV")
+    return df      
 
 @app.route("/connect-drive")
 def connect_drive():
@@ -273,7 +294,7 @@ def delete_file():
 @app.route("/drive/anal/<file_id>")
 def read_csv_from_drive(file_id):
     token= request.args.get("token")
-    if not file_id : 
+    if not file_id :
         return jsonify({"error" : "File_id is required "}) , 500
     service, err = authenticate_and_get_service(token)
     if err:
@@ -294,7 +315,55 @@ def read_csv_from_drive(file_id):
         return jsonify({ "error": "The CSV file is empty" }), 400
     except pd.errors.ParserError:
         return jsonify({"error": "The file is not a valid CSV" }), 400
-    return jsonify({"CSV": df.to_dict(orient="records")}), 200    
+    return jsonify({"CSV": df.to_dict(orient="records")}), 200  
+
+@app.route("/drive/append/<file_id>", methods=["POST"])
+def append_csv_to_drive(file_id):
+    token = request.args.get("token")
+    if not file_id:
+        return jsonify({"error": "File_id is required"}), 500
+    service, err = authenticate_and_get_service(token)
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    new_rows = body.get("rows")  # expects list of dicts: [{"col1": "val", "col2": "val"}, ...]
+    if not new_rows or not isinstance(new_rows, list):
+        return jsonify({"error": "expected a non-empty 'rows' list"}), 400
+    try:
+        drive_request = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, drive_request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+    except Exception as e:
+        return jsonify({"error": "Failed to read CSV from Google Drive", "details": str(e)}), 500
+    try:
+        existing_df = pd.read_csv(buffer)
+    except pd.errors.EmptyDataError:
+        existing_df = pd.DataFrame()
+    except pd.errors.ParserError:
+        return jsonify({"error": "The existing file is not a valid CSV"}), 400
+    try:
+        new_df = pd.DataFrame(new_rows)
+    except Exception as e:
+        return jsonify({"error": "Invalid row data", "details": str(e)}), 400
+    if not existing_df.empty and list(existing_df.columns) != list(new_df.columns):
+        missing_cols = set(existing_df.columns) - set(new_df.columns)
+        extra_cols = set(new_df.columns) - set(existing_df.columns)
+        if missing_cols or extra_cols:
+            return jsonify({ "error": "Column mismatch between existing CSV and new rows","missing_in_new": list(missing_cols),"unexpected_in_new": list(extra_cols)}), 400
+    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+    out_buffer = io.BytesIO()
+    combined_df.to_csv(out_buffer, index=False)
+    out_buffer.seek(0)
+    try:
+        media = MediaIoBaseUpload(out_buffer, mimetype="text/csv", resumable=True)
+        service.files().update(fileId=file_id, media_body=media).execute()
+    except Exception as e:
+        return jsonify({"error": "Failed to write updated CSV to Google Drive", "details": str(e)}), 500
+    return jsonify({"status": "ok","rows_added": len(new_df),"total_rows": len(combined_df)}), 200
 
 @app.route("/drive/metadata")
 def get_drive_file_metadata():
