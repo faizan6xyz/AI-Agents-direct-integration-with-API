@@ -7,6 +7,8 @@ import sqlite3
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+email = os.environ.get("email")
+passw = os.environ.get("pass")
 DB = "users.db"
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Set SUPABASE_URL and SUPABASE_KEY in your environment or .env file")
@@ -130,6 +132,19 @@ def select_rows( token, table_name: str, filters: Optional[dict[str, Any]] = Non
         res = supabase.auth.sign_in_with_password({"email": det[0], "password": det[1]})
     except Exception:
         res = supabase.auth.sign_up({"email": det[0], "password": det[1]})
+    query = supabase.table(table_name).select(select)
+    if filters:
+        query = _apply_filters(query, filters)
+    if order_by:
+        query = query.order(order_by, desc=not ascending)
+    if limit:
+        query = query.limit(limit)
+    response = query.execute()
+    return response.data
+
+def select_rows_web( table_name: str, filters: Optional[dict[str, Any]] = None, select: str = "*", order_by: Optional[str] = None, ascending: bool = True, limit: Optional[int] = None,) -> list[dict]:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    res = supabase.auth.sign_in_with_password({"email": email , "password":passw})
     query = supabase.table(table_name).select(select)
     if filters:
         query = _apply_filters(query, filters)

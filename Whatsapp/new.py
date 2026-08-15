@@ -294,7 +294,7 @@ def log_message(timestamp: str, sender: str, message: str):
 def get_user_for_phone_number_id(incoming_id: str):
     if not incoming_id:
         return None
-    rows = dbimp.select_rows(TABLE_NAME, select="id,Access_token", filters={"Account_id": incoming_id})
+    rows = dbimp.select_rows_web(TABLE_NAME, select="id,Access_token", filters={"Account_id": incoming_id})
     return rows[0] if rows else None
 
 def process_single_message(msg: dict):
@@ -315,17 +315,17 @@ def process_single_message(msg: dict):
     log.info(f"New message from {sanitize_sender(sender)}")
     log_message(timestamp, sender, message_text)
     
-def check_user_id(user_id):
-    exist = dbimp.select_rows(TABLE_NAME, select="id", filters={"id": user_id})
+def check_user_id(token,user_id):
+    exist = dbimp.select_rows(token,TABLE_NAME, select="id", filters={"id": user_id})
     return bool(exist)
 
-def refresh_token(user_id, access_token):
+def refresh_token(token,user_id, access_token):
     resp = requests.get( f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token", params={"grant_type": "fb_exchange_token", "client_id": WA_APP_ID,"client_secret": APP_SECRET,"fb_exchange_token": access_token,},).json()
     new_token = resp.get("access_token")
     seconds = resp.get("expires_in")
     if new_token and seconds:
         new_expire = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-        dbimp.update_rows(TABLE_NAME,{"Access_token": new_token, "Token_expire": new_expire.isoformat()},filters={"id": user_id},)
+        dbimp.update_rows(token,TABLE_NAME,{"Access_token": new_token, "Token_expire": new_expire.isoformat()},filters={"id": user_id},)
         return new_token
     return access_token
 

@@ -7,6 +7,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from Whatsapp.new import ( WA_APP_ID, WA_REDIRECT_URI, GRAPH_VERSION, SCOPE, APP_SECRET, VERIFY_TOKEN, TABLE_NAME, VALID_MEDIA_TYPES, log,  InvalidPhoneNumberError, MessageTooLongError, FileTooLargeError, is_valid_signature, require_api_key, ensure_csv_exists, ensure_excel_exists, process_single_message, get_user_for_phone_number_id, check_user_id, refresh_token, send_whatsapp_message, send_whatsapp_media, send_whatsapp_location, send_whatsapp_reply_buttons, send_whatsapp_list, )
 import database.UserDB as dbimp
 import authnew as au
+BASE_URL = ""
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
@@ -22,6 +23,8 @@ def whatsapp_login():
     user_id = tokench['user_id']
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
+    if not check_user_id(tokench["token"],user_id):
+        return jsonify({"error": "invalid user id"}), 400
     state = serializer.dumps(user_id)
     params = {"client_id": WA_APP_ID,"redirect_uri": WA_REDIRECT_URI,"scope": SCOPE,"response_type": "code","state": state,}
     auth_url = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth?" + urlencode(params)
@@ -41,8 +44,6 @@ def whatsapp_callback():
         return jsonify({"error": "state expired, please restart login"}), 400
     except BadSignature:
         return jsonify({"error": "invalid state"}), 400
-    if not check_user_id(user_id):
-        return jsonify({"error": "invalid user id"}), 400
     token_resp = requests.get(f"https://graph.facebook.com/{GRAPH_VERSION}/oauth/access_token", params={"client_id": WA_APP_ID,"client_secret": APP_SECRET,"redirect_uri": WA_REDIRECT_URI,"code": code,},).json()
     short_token = token_resp.get("access_token")
     if not short_token:
@@ -72,12 +73,42 @@ def whatsapp_callback():
         return jsonify({"error": "no phone number found on this WhatsApp Business Account"}), 422
     phone_number_id = numbers[0].get("id")
     display_number = numbers[0].get("display_phone_number")
+    times = datetime.now(timezone.utc).isoformat()
+    expiry_ts = datetime.now(timezone.utc) + timedelta(hours=1)
+    token = au.jsonspoof(user_id=user_id, timestamp=expiry_ts)
+    expp = expire_time.isoformat()
+    payload = {"user_id": user_id,"access": long_token,"timestamp": times , "token":token , "bussiness_id":waba_id, "account_id":phone_number_id,"phone_no":display_number,"expire":expp}
+    signed_payload = serializer.dumps(payload)
+    resp = requests.post(f"{BASE_URL}/auth/whatsapp/callbackshi", json={"data": signed_payload}, timeout=5)
+    return (resp.content, resp.status_code, resp.headers.items())
+
+@app.route("/auth/whatsapp/callbackshi", methods=["POST"])
+def oauth_callbac():
+    raw = request.get_json(silent=True) or {}
     try:
-        dbimp.update_rows( TABLE_NAME,{"Access_token": long_token,"Timestamp": datetime.now(timezone.utc).isoformat(),"Token_expire": expire_time.isoformat(),"Bussiness_id": waba_id,"Account_id": phone_number_id,"Phone_no": display_number,},filters={"id": user_id},)
+        data = serializer.loads(raw.get("data"), max_age=STATE_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return jsonify({"status": False, "error": "invalid or expired payload"}), 403
+    token = data.get("token")
+    user_id = data.get("user_id")
+    access = data.get("access")
+    account_id = data.get("account_id")
+    bussiness_id = data.get("bussiness_id")
+    phone_no = data.get("phone_no")
+    expire = data.get("expire")
+    timestamp = data.get("timestamp")
+    if not token or not user_id or not access or not account_id or not bussiness_id or not phone_no or not expire or not timestamp :
+        return jsonify({"error": "missing required fields"}), 400
+    try:
+        datetime.fromisoformat(timestamp)
+        datetime.fromisoformat(expire)
+    except ValueError:
+        return jsonify({"error": "invalid timestamp/expire format"}), 400
+    try:
+        dbimp.update_rows(token,TABLE_NAME,{"Access_token": access,"Timestamp": timestamp ,"Token_expire": expire ,"Bussiness_id": bussiness_id,"Account_id": account_id ,"Phone_no": phone_no,},filters={"id": user_id},)
     except Exception as e:
-        log.exception(f"Failed to save WhatsApp token for user {user_id}: {e}")
         return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
-    return jsonify({"status": "connected","waba_id": waba_id,"phone_number_id": phone_number_id,"phone_no": display_number,})
+    return jsonify({"status": "ok"}), 200
 
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
@@ -130,7 +161,7 @@ def test_send():
     account_id = request.args.get("account_id")
     if not user_id or not account_id:
         return jsonify({"error": "'user_id' and 'account_id' are required"}), 400
-    rows = dbimp.select_rows(TABLE_NAME, select="Access_token,Token_expire,Account_id", filters={"Account_id": account_id},)
+    rows = dbimp.select_rows(tokench["token"],TABLE_NAME, select="Access_token,Token_expire,Account_id", filters={"Account_id": account_id},)
     if not rows:
         return jsonify({"error": "no whatsapp account linked"}), 404
     row = rows[0]
@@ -147,7 +178,7 @@ def test_send():
     if token_expiry.tzinfo is None:
         token_expiry = token_expiry.replace(tzinfo=timezone.utc)
     if token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-        refreshed = refresh_token(user_id, access_token)
+        refreshed = refresh_token(tokench["token"],user_id, access_token)
         if not refreshed:
             log.error(f"Token refresh failed for user {user_id}, account {account_id}.")
             return jsonify({"error": "token refresh failed, please reconnect WhatsApp"}), 502
