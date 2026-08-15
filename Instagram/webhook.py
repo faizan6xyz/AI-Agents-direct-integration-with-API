@@ -1,17 +1,25 @@
+import requests
 import os
 import hmac
 import hashlib
+from datetime import datetime, timezone, timedelta
+import pandas as pd
 import requests
+import database.UserDB as dbimp
+import upload as uploadd
+import authnew as au
+import Drive.dep as dp
 from flask import Flask, request, jsonify
 app = Flask(__name__)
 VERIFY_TOKEN = os.getenv("IG_VERIFY_TOKEN")
 APP_SECRET = os.getenv("IG_APP_SECRET")
+table = "Instagram"
 
-@app.route("/instagram/comments/<account_id>", methods=["GET", "POST"])
-def webhook(account_id):
+@app.route("/instagram/comments/", methods=["GET", "POST"])
+def webhook():
     if request.method == "GET":
         return verify_webhook()
-    return receive_webhook(account_id)
+    return receive_webhook()
 
 def verify_webhook():
     mode = request.args.get("hub.mode")
@@ -21,17 +29,34 @@ def verify_webhook():
         return challenge, 200
     return "Forbidden", 403
 
-def receive_webhook(account_id):
+def receive_webhook():
     if not verify_signature(request):
         return "Invalid signature", 403
     data = request.get_json()
-    events = []  
     if data.get("object") == "instagram":
         for entry in data.get("entry", []):
+            ig_account_id = entry.get("id")
             for change in entry.get("changes", []):
                 if change.get("field") == "comments":
-                    events.append(handle_comment_event(account_id, change["value"]))
-    return jsonify({"info" :events, "status" :"EVENT_RECEIVED"}), 200
+                    value = change["value"]
+                    from_user_id = value.get("from", {}).get("id")
+                    media_id = value.get("media", {}).get("id")   
+            access_token = dbimp.select_rows_web(table,select="id,file",filters={"Account_id":ig_account_id}) 
+            access = access_token[0] if access_token else None
+            user_id = access["id"]
+            file_id = access["file"]
+            expiry_ts = datetime.now(timezone.utc) + timedelta(hours=1)
+            token = au.jsonspoof(user_id=user_id, timestamp=expiry_ts)
+            if not access_token :
+                return 
+            df = dp.read_csv_from_dive(token=token,file_id=file_id)
+            message = df.loc[(df["Post_id"] == media_id) & (df["message"].notna()), "message"].drop_duplicates().iloc[0]
+            if not from_user_id or not message:
+                return jsonify({"error": "from_user_id and message are required"}), 400
+            result = uploadd.send_message(from_user_id, message, access_token)
+            if not result["success"]:
+                return jsonify(result), 400
+            return jsonify(result), 200
 
 def verify_signature(req):
     signature = req.headers.get("X-Hub-Signature-256", "")
