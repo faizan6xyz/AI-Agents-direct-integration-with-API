@@ -140,12 +140,18 @@ def receive_webhook_message():
                     log.warning(f"Rejected webhook payload: unrecognized phone_number_id ({my_phone_number_id}).")
                     continue
                 user_id = user_row["id"]
+                files = dbimp.select_rows_web(TABLE_NAME,select="File,Access_token",filters={"Account_id": my_phone_number_id},)
+                file = files[0]["File"] if files else None
+                acc = files[0]["Access_token"] if files else None
+                if not file or not acc:
+                    log.warning(f"No campaign file/access token found for phone_number_id ({my_phone_number_id}).")
+                    continue
                 for msg in messages:
                     sender_wa_id = msg.get("from")  # e.g. "919876543210"
                     timee = datetime.now(timezone.utc) + timedelta(hours=1)
                     token = au.jsonspoof(user_id=user_id, timestamp=timee)
-                    file = dbimp.select_rows_web(TABLE_NAME,select="file",filters={"Account_id": my_phone_number_id},)
                     ss = dp.mark_status_done(file_id=file,token=token,sender_id=sender_wa_id,status_col="status",id_col="sender_id",)
+                    send_whatsapp_message(PHONE_NUMBER_ID=my_phone_number_id,ACCESS_TOKEN=acc,recipient_number=sender_wa_id,message_body="Thanks for replying , We recived your message ",)
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
     return jsonify({"status": "received"}), 200
