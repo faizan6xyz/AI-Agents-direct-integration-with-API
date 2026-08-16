@@ -133,8 +133,8 @@ def receive_webhook_message():
             changes = entry.get("changes", [])
             for change in changes:
                 value = change.get("value", {})
-                my_phone_number_id = value.get("metadata", {}).get("phone_number_id")
                 messages = value.get("messages", [])
+                my_phone_number_id = value.get("metadata", {}).get("phone_number_id")
                 user_row = get_user_for_phone_number_id(my_phone_number_id)
                 if not user_row:
                     log.warning(f"Rejected webhook payload: unrecognized phone_number_id ({my_phone_number_id}).")
@@ -147,11 +147,16 @@ def receive_webhook_message():
                     log.warning(f"No campaign file/access token found for phone_number_id ({my_phone_number_id}).")
                     continue
                 for msg in messages:
-                    sender_wa_id = msg.get("from")  # e.g. "919876543210"
+                    sender_wa_id = msg.get("from")
+                    msg_type = msg.get("type")
+                    body = None
+                    if msg_type == "text":
+                        body = msg.get("text", {}).get("body")
+                    if body and body.strip().lower() == "no":
+                        send_whatsapp_message(PHONE_NUMBER_ID=my_phone_number_id,ACCESS_TOKEN=acc,recipient_number=sender_wa_id,message_body="Thanks for replying , We recived your message ",)
                     timee = datetime.now(timezone.utc) + timedelta(hours=1)
                     token = au.jsonspoof(user_id=user_id, timestamp=timee)
                     ss = dp.mark_status_done(file_id=file,token=token,sender_id=sender_wa_id,status_col="status",id_col="sender_id",)
-                    send_whatsapp_message(PHONE_NUMBER_ID=my_phone_number_id,ACCESS_TOKEN=acc,recipient_number=sender_wa_id,message_body="Thanks for replying , We recived your message ",)
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
     return jsonify({"status": "received"}), 200

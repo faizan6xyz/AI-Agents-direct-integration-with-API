@@ -180,10 +180,11 @@ def mark_status_done(token, file_id, sender_id, status_col, id_col):
     if status_col not in df.columns:
         raise ValueError(f"Column '{status_col}' not found in CSV")
     mask = (df[id_col] == sender_id) & (df[status_col] == "receive")
-    rows_updated = int(mask.sum())
-    if rows_updated == 0:
+    if not mask.any():
         return {"status": "ok","rows_updated": 0,"message": f"No matching rows found for sender_id={sender_id} with status='receive'"}
-    df.loc[mask, status_col] = "done"
+    last_idx = df[mask].index[-1]
+    df.loc[last_idx, status_col] = "True"
+    rows_updated = 1
     out_buffer = io.BytesIO()
     df.to_csv(out_buffer, index=False)
     out_buffer.seek(0)
@@ -192,7 +193,7 @@ def mark_status_done(token, file_id, sender_id, status_col, id_col):
         service.files().update(fileId=file_id, media_body=media).execute()
     except Exception as e:
         raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
-    return {"status": "ok","rows_updated": rows_updated}
+    return {"status": "ok", "rows_updated": rows_updated}
 
 @app.route("/connect-drive")
 def connect_drive():
