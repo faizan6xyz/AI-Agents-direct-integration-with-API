@@ -43,17 +43,17 @@ def require_api_key(f):
         return f(*args, **kwargs)
     return wrapper
 
-def get_valid_user_id():
-    token = request.args.get("token")
+def get_valid_user_id(token):
     if not token:
-        return None
+        return None, None
     tokench = au.process(token=token)
     if not tokench["status"]:
-        return None
+        return None, None
+    token = tokench["token"]
     user_id = tokench['user_id']
-    if not user_id or not USER_ID_RE.match(user_id):
-        return None
-    return user_id
+    if not user_id or not token or not USER_ID_RE.match(user_id):
+        return None, None
+    return user_id, token
 
 def safe_error(e, status=400):
     logger.exception("request failed")
@@ -128,10 +128,11 @@ def oauth_callbac():
 @limiter.limit("30 per minute")
 @require_api_key
 def list_messages():
-    user_id = get_valid_user_id()
+    token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
     if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
-    token = request.args.get("token")
     if not token :
         return jsonify({"status":False}) , 403
     query = request.args.get('q', 'is:unread')[:200]
@@ -154,10 +155,12 @@ def list_messages():
 @limiter.limit("20 per minute")
 @require_api_key
 def send_message():
-    user_id = get_valid_user_id()
     token = request.args.get("token")
-    if not user_id or not token:
+    user_id ,token  = get_valid_user_id(token)
+    if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
+    if not token :
+        return jsonify({"status":False}) , 403
     data = request.get_json(silent=True) or {}
     to = data.get('to')
     subject = str(data.get('subject', ''))[:300]
@@ -178,13 +181,14 @@ def send_message():
 @limiter.limit("10 per minute")
 @require_api_key
 def send_message_with_attachments():
-    user_id = get_valid_user_id()
+    token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
     if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
-    to = request.args.get('to')
-    token = request.args.get("token")
     if not token :
         return jsonify({"status":False}) , 403
+    to = request.args.get('to')
     subject = str(request.args.get('subject', ''))[:300]
     body_text = str(request.args.get('body_text', ''))[:50000]
     name = str(request.args.get('name', ''))[:200]
@@ -222,11 +226,14 @@ def send_message_with_attachments():
 @limiter.limit("60 per minute")
 @require_api_key
 def mark_as_read(message_id):
-    user_id = get_valid_user_id()
     token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
     if not token :
         return jsonify({"status":False}) , 403
-    if not user_id or not MESSAGE_ID_RE.match(message_id):
+    if not MESSAGE_ID_RE.match(message_id):
         return jsonify({"error": "valid 'user_id' and message_id are required"}), 400
     try:
         service = gc.get_service(token=token,user_id=user_id)
@@ -241,11 +248,14 @@ def mark_as_read(message_id):
 @limiter.limit("60 per minute")
 @require_api_key
 def mark_as_unread(message_id):
-    user_id = get_valid_user_id()
     token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
     if not token :
         return jsonify({"status":False}) , 403
-    if not user_id or not MESSAGE_ID_RE.match(message_id):
+    if not MESSAGE_ID_RE.match(message_id):
         return jsonify({"error": "valid 'user_id' and message_id are required"}), 400
     try:
         service = gc.get_service(token=token,user_id=user_id)
@@ -260,11 +270,14 @@ def mark_as_unread(message_id):
 @limiter.limit("20 per minute")
 @require_api_key
 def download_attachments(message_id):
-    user_id = get_valid_user_id()
     token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
     if not token :
         return jsonify({"status":False}) , 403
-    if not user_id or not MESSAGE_ID_RE.match(message_id):
+    if not MESSAGE_ID_RE.match(message_id):
         return jsonify({"error": "valid 'user_id' and message_id are required"}), 400
     out_dir = os.path.join(ATTACH_ROOT, secure_filename(user_id), secure_filename(message_id))
     if not os.path.abspath(out_dir).startswith(ATTACH_ROOT):
@@ -282,12 +295,13 @@ def download_attachments(message_id):
 @limiter.limit("30 per minute")
 @require_api_key
 def list_filters():
-    user_id = get_valid_user_id()
     token = request.args.get("token")
-    if not token :
-        return jsonify({"status":False}) , 403
+    user_id ,token  = get_valid_user_id(token)
+
     if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
+    if not token :
+        return jsonify({"status":False}) , 403
     try:
         service = gc.get_service(token=token,user_id=user_id)
         if not service:
@@ -300,10 +314,13 @@ def list_filters():
 @limiter.limit("15 per minute")
 @require_api_key
 def create_filter():
-    user_id = get_valid_user_id()
     token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
     if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
+    if not token :
+        return jsonify({"status":False}) , 403
     data = request.get_json(silent=True) or {}
     criteria = data.get('criteria')
     action = data.get('action')
@@ -324,12 +341,15 @@ def create_filter():
 @limiter.limit("15 per minute")
 @require_api_key
 def delete_filter(filter_id):
-    user_id = get_valid_user_id()
     token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
     if not token :
         return jsonify({"status":False}) , 403
-    if not user_id or not MESSAGE_ID_RE.match(filter_id):
-        return jsonify({"error": "valid 'user_id' and filter_id are required"}), 400
+    if not MESSAGE_ID_RE.match(filter_id):
+        return jsonify({"error": "valid filter_id are required"}), 400
     try:
         service = gc.get_service(token=token,user_id=user_id)
         if not service:
@@ -343,12 +363,12 @@ def delete_filter(filter_id):
 @limiter.limit("30 per minute")
 @require_api_key
 def list_labels():
-    user_id = get_valid_user_id()
     token = request.args.get("token")
-    if not token :
-        return jsonify({"status":False}) , 403
+    user_id ,token  = get_valid_user_id(token)
     if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
+    if not token :
+        return jsonify({"status":False}) , 403
     try:
         service = gc.get_service(token=token,user_id=user_id)
         if not service:
@@ -361,10 +381,13 @@ def list_labels():
 @limiter.limit("15 per minute")
 @require_api_key
 def create_label():
-    user_id = get_valid_user_id()
     token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
     if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
+    if not token :
+        return jsonify({"status":False}) , 403
     data = request.get_json(silent=True) or {}
     name = data.get('name')
     if not name or not LABEL_NAME_RE.match(name):
@@ -384,6 +407,33 @@ def create_label():
     except Exception as e:
         return safe_error(e)
 
+@app.route('/labels/<label_id>/count', methods=['GET'])
+@limiter.limit("30 per minute")
+@require_api_key
+def get_label_count(label_id):
+    token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
+    if not token :
+        return jsonify({"status":False}) , 403
+    if not label_id:
+        return jsonify({"error": "valid 'label_id' is required"}), 400
+    try:
+        service = gc.get_service(token=token, user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
+        label = service.users().labels().get(userId="me", id=label_id).execute()
+        return jsonify({"id": label.get("id"),
+                        "name": label.get("name"),
+                        "messages_total": label.get("messagesTotal", 0),
+                        "messages_unread": label.get("messagesUnread", 0),
+                        "threads_total": label.get("threadsTotal", 0),
+                        "threads_unread": label.get("threadsUnread", 0),})
+    except Exception as e:
+        return safe_error(e)
+
 @app.errorhandler(429)
 def rate_limit_handler(e):
     return jsonify({"error": "rate limit exceeded"}), 429
@@ -393,13 +443,12 @@ def rate_limit_handler(e):
 @require_api_key
 def send_multiple_message():
     token = request.args.get("token")
+    user_id ,token  = get_valid_user_id(token)
+
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
     if not token :
         return jsonify({"status":False}) , 403
-    tokench = au.process(token=token)
-    if not tokench["status"] :
-        return jsonify({"status": "failed" , "reason": tokench["reason"]})
-    user_id = tokench['user_id']
-
     data = request.get_json(force=True) or {}
     messages = data.get('messages')
     if not messages or not isinstance(messages, list):
@@ -432,12 +481,10 @@ def send_multiple_message():
 @require_api_key
 def send_multiple_message_with_attachments():
     token = request.args.get("token")
-    if not token :
-        return jsonify({"status":False}) , 403
-    tokench = au.process(token=token)
-    if not tokench["status"] :
-        return jsonify({"status": "failed" , "reason": tokench["reason"]})
-    user_id = tokench['user_id']
+    user_id ,token  = get_valid_user_id(token)
+
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
     if not token :
         return jsonify({"status":False}) , 403
     recipients_raw = request.args.get('to')
