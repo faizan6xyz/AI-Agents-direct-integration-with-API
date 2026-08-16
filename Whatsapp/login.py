@@ -7,6 +7,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from Whatsapp.new import ( WA_APP_ID, WA_REDIRECT_URI, GRAPH_VERSION, SCOPE, APP_SECRET, VERIFY_TOKEN, TABLE_NAME, VALID_MEDIA_TYPES, log,  InvalidPhoneNumberError, MessageTooLongError, FileTooLargeError, is_valid_signature, require_api_key, ensure_csv_exists, ensure_excel_exists, process_single_message, get_user_for_phone_number_id, check_user_id, refresh_token, send_whatsapp_message, send_whatsapp_media, send_whatsapp_location, send_whatsapp_reply_buttons, send_whatsapp_list, )
 import database.UserDB as dbimp
 import authnew as au
+import Drive.dep as dp
 BASE_URL = ""
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
@@ -120,7 +121,7 @@ def verify_webhook():
     log.warning("Webhook verification attempt failed (bad mode/verify token).")
     return "Verification failed", 403
 
-@app.route("/webhook", methods=["POST"]) # add a reply to message for ever incoming message 
+@app.route("/webhook", methods=["POST"])  # add a reply to message for every incoming message
 def receive_webhook_message():
     if not is_valid_signature(request):
         log.error("Rejected webhook POST: invalid or missing signature.")
@@ -132,20 +133,22 @@ def receive_webhook_message():
             changes = entry.get("changes", [])
             for change in changes:
                 value = change.get("value", {})
-                incoming_id = value.get("metadata", {}).get("phone_number_id")
-                user_row = get_user_for_phone_number_id(incoming_id)
-                if not user_row:
-                    log.warning(f"Rejected webhook payload: unrecognized phone_number_id ({incoming_id!r}).")
-                    continue
+                my_phone_number_id = value.get("metadata", {}).get("phone_number_id")
                 messages = value.get("messages", [])
+                user_row = get_user_for_phone_number_id(my_phone_number_id)
+                if not user_row:
+                    log.warning(f"Rejected webhook payload: unrecognized phone_number_id ({my_phone_number_id}).")
+                    continue
+                user_id = user_row["id"]
                 for msg in messages:
-                    try:
-                        process_single_message(msg)
-                    except Exception as e:
-                        log.exception(f"Failed to process message {msg.get('id')}: {e}")
+                    sender_wa_id = msg.get("from")  # e.g. "919876543210"
+                    timee = datetime.now(timezone.utc) + timedelta(hours=1)
+                    token = au.jsonspoof(user_id=user_id, timestamp=timee)
+                    file = dbimp.select_rows_web(TABLE_NAME,select="file",filters={"Account_id": my_phone_number_id},)
+                    ss = dp.mark_status_done(file_id=file,token=token,sender_id=sender_wa_id,status_col="status",id_col="sender_id",)
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
-    return jsonify({"status": "received"}), 200 
+    return jsonify({"status": "received"}), 200
 
 @app.route("/send-test", methods=["POST"])
 def test_send():
@@ -157,7 +160,6 @@ def test_send():
     if not tokench["status"] :
         return jsonify({"status": "failed" , "reason": tokench["reason"]})
     user_id = tokench['user_id']
-
     account_id = request.args.get("account_id")
     if not user_id or not account_id:
         return jsonify({"error": "'user_id' and 'account_id' are required"}), 400

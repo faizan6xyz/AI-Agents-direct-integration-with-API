@@ -10,10 +10,8 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict, deque
 import requests
 from flask import request, jsonify
-from openpyxl import Workbook, load_workbook
 import database.UserDB as dbimp
 from supabase import create_client, Client
-import Whatsapp.new as wtpp
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -255,66 +253,12 @@ def send_whatsapp_list(PHONE_NUMBER_ID, ACCESS_TOKEN, recipient_number: str, bod
     resp = request_with_retry("POST", url, headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},json=payload, )
     return resp.json()
 
-def ensure_csv_exists():
-    os.makedirs(os.path.dirname(CSV_FILE), exist_ok=True)
-    if not os.path.exists(CSV_FILE):
-        with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(COLUMNS_NAME)
-
-def ensure_excel_exists():
-    os.makedirs(os.path.dirname(EXCEL_FILE), exist_ok=True)
-    if not os.path.exists(EXCEL_FILE):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Messages"
-        ws.append(COLUMNS_NAME)
-        wb.save(EXCEL_FILE)
-
-def log_message(timestamp: str, sender: str, message: str):
-    sender = sanitize_sender(sender)
-    message = sanitize_log_field(message)
-    with file_lock:
-        try:
-            ensure_csv_exists()
-            with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow([timestamp, sender, message])
-        except OSError as e:
-            log.error(f"Failed to write CSV row: {e}")
-        try:
-            ensure_excel_exists()
-            wb = load_workbook(EXCEL_FILE)
-            ws = wb["Messages"]
-            ws.append([timestamp, sender, message])
-            wb.save(EXCEL_FILE)
-        except Exception as e:
-            log.error(f"Failed to write Excel row: {e}")
-
 def get_user_for_phone_number_id(incoming_id: str):
     if not incoming_id:
         return None
     rows = dbimp.select_rows_web(TABLE_NAME, select="id,Access_token", filters={"Account_id": incoming_id})
     return rows[0] if rows else None
 
-def process_single_message(msg: dict):
-    sender = msg.get("from", "unknown")
-    wa_timestamp = msg.get("timestamp")
-    if wa_timestamp:
-        try:
-            timestamp = datetime.fromtimestamp(int(wa_timestamp), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        except (ValueError, OverflowError):
-            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    msg_type = msg.get("type")
-    if msg_type == "text":
-        message_text = msg.get("text", {}).get("body", "")
-    else:
-        message_text = f"[Unsupported message type: {msg_type}]"
-    log.info(f"New message from {sanitize_sender(sender)}")
-    log_message(timestamp, sender, message_text)
-    
 def check_user_id(token,user_id):
     exist = dbimp.select_rows(token,TABLE_NAME, select="id", filters={"id": user_id})
     return bool(exist)

@@ -153,6 +153,47 @@ def read_csv_from_dive(file_id, token):
         raise ValueError("The file is not a valid CSV")
     return df      
 
+def mark_status_done(token, file_id, sender_id, status_col, id_col):
+    if not file_id:
+        raise ValueError("file_id is required")
+    service, err = authenticate_and_get_service(token)
+    if err:
+        raise RuntimeError(f"Authentication failed: {err}")
+    try:
+        drive_request = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, drive_request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read CSV from Google Drive: {e}")
+    try:
+        df = pd.read_csv(buffer)
+    except pd.errors.EmptyDataError:
+        raise ValueError("The CSV file is empty")
+    except pd.errors.ParserError:
+        raise ValueError("The existing file is not a valid CSV")
+    if id_col not in df.columns:
+        raise ValueError(f"Column '{id_col}' not found in CSV")
+    if status_col not in df.columns:
+        raise ValueError(f"Column '{status_col}' not found in CSV")
+    mask = (df[id_col] == sender_id) & (df[status_col] == "receive")
+    rows_updated = int(mask.sum())
+    if rows_updated == 0:
+        return {"status": "ok","rows_updated": 0,"message": f"No matching rows found for sender_id={sender_id} with status='receive'"}
+    df.loc[mask, status_col] = "done"
+    out_buffer = io.BytesIO()
+    df.to_csv(out_buffer, index=False)
+    out_buffer.seek(0)
+    try:
+        media = MediaIoBaseUpload(out_buffer, mimetype="text/csv", resumable=True)
+        service.files().update(fileId=file_id, media_body=media).execute()
+    except Exception as e:
+        raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
+    return {"status": "ok","rows_updated": rows_updated}
+
 @app.route("/connect-drive")
 def connect_drive():
     user_id, err = authenticate_request()
