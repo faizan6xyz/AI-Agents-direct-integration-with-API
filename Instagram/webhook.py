@@ -41,7 +41,7 @@ def receive_webhook():
                     value = change["value"]
                     from_user_id = value.get("from", {}).get("id")
                     media_id = value.get("media", {}).get("id")   
-            access_token = dbimp.select_rows_web(table,select="id,file",filters={"Account_id":ig_account_id}) 
+            access_token = dbimp.select_rows_web(table,select="id,File",filters={"Account_id":ig_account_id}) 
             access = access_token[0] if access_token else None
             user_id = access["id"]
             file_id = access["file"]
