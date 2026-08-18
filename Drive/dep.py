@@ -195,6 +195,76 @@ def mark_status_done(token, file_id, sender_id, status_col, id_col):
         raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
     return {"status": "ok", "rows_updated": rows_updated}
 
+def append_text_file(token, file_id, text_to_append, add_newline=True):
+    if not file_id:
+        raise ValueError("file_id is required")
+    service, err = authenticate_and_get_service(token)
+    if err:
+        raise RuntimeError(f"Authentication failed: {err}")
+
+    try:
+        drive_request = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, drive_request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+        existing_content = buffer.read().decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Failed to read text file from Google Drive: {e}")
+
+    if existing_content and not existing_content.endswith("\n") and add_newline:
+        existing_content += "\n"
+
+    new_content = existing_content + text_to_append + ("\n" if add_newline else "")
+
+    out_buffer = io.BytesIO(new_content.encode("utf-8"))
+    out_buffer.seek(0)
+
+    try:
+        media = MediaIoBaseUpload(out_buffer, mimetype="text/plain", resumable=True)
+        service.files().update(fileId=file_id, media_body=media).execute()
+    except Exception as e:
+        raise RuntimeError(f"Failed to write updated text file to Google Drive: {e}")
+
+    return {"status": "ok", "bytes_appended": len(text_to_append)}
+
+
+def update_text_file(token, file_id, old_text, new_text, replace_all=False):
+    if not file_id:
+        raise ValueError("file_id is required")
+    service, err = authenticate_and_get_service(token)
+    if err:
+        raise RuntimeError(f"Authentication failed: {err}")
+    try:
+        drive_request = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, drive_request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+        content = buffer.read().decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Failed to read text file from Google Drive: {e}")
+    if old_text not in content:
+        return {"status": "ok", "rows_updated": 0, "message": f"Text '{old_text}' not found in file"}
+    if replace_all:
+        occurrences = content.count(old_text)
+        content = content.replace(old_text, new_text)
+    else:
+        occurrences = 1
+        content = content.replace(old_text, new_text, 1)
+    out_buffer = io.BytesIO(content.encode("utf-8"))
+    out_buffer.seek(0)
+    try:
+        media = MediaIoBaseUpload(out_buffer, mimetype="text/plain", resumable=True)
+        service.files().update(fileId=file_id, media_body=media).execute()
+    except Exception as e:
+        raise RuntimeError(f"Failed to write updated text file to Google Drive: {e}")
+    return {"status": "ok", "rows_updated": occurrences}
+
 @app.route("/connect-drive")
 def connect_drive():
     user_id, err = authenticate_request()
