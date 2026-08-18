@@ -5,16 +5,16 @@ import database.UserDB as dbimp
 import Drive.dep as depppp
 SECRET_KEY = os.environ.get("token_secret", "").encode("utf-8")
 
-def mainfileIdentity(user_id, token, tablename, columnn, c_value):
+def mainfileIdentity(user_id, token, tablename,):
     if not user_id or not token:
         return False
-    rows = dbimp.select_rows(token, tablename, select="File,Hash_file", filters={columnn: c_value})
+    rows = dbimp.select_rows(token, tablename, select="File,Hash_file", filters={"is": user_id})
     row = rows[0] if rows else None
     if row is None:
         return False
     hashed = row["Hash_file"]
     file_id = row["File"]
-    x = depppp.read_csv_from_dive(file_id=file_id, token=token)
+    x = depppp.read_csv_from_dive(file_id=file_id, token=token , text_is=True)
     if not x:
         return False
     x_hash = hmac.new(SECRET_KEY, x.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -46,3 +46,4 @@ def fileIdenetiy(user_id, token, text,purpose):
     if not hmac.compare_digest(x_hash, file_hash):
         return False
     return x
+

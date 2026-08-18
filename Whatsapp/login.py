@@ -155,7 +155,7 @@ def receive_webhook_message():
                         send_whatsapp_message(PHONE_NUMBER_ID=my_phone_number_id,ACCESS_TOKEN=acc,recipient_number=sender_wa_id,message_body="Thanks for replying , We recived your message ",)
                     timee = datetime.now(timezone.utc) + timedelta(hours=1)
                     token = au.jsonspoof(user_id=user_id, timestamp=timee)
-                    ss = dp.mark_status_done(file_id=file,token=token,sender_id=sender_wa_id,status_col="status",id_col="sender_id",)
+                    ss = dp.mark_status_done(file_id=file,token=token,sender_ids=sender_wa_id,status_col="status",id_col="sender_id",)
     except Exception as e:
         log.exception(f"Error processing webhook payload: {e}")
     return jsonify({"status": "received"}), 200

@@ -8,6 +8,7 @@ from googleapiclient.errors import HttpError
 import tempfile
 from datetime import datetime, timezone, timedelta
 from google.oauth2.credentials import Credentials
+import csv
 from google.auth.transport.requests import Request as GoogleRequest
 from google.auth.exceptions import RefreshError, TransportError, GoogleAuthError
 from googleapiclient.discovery import build
@@ -129,7 +130,7 @@ def create_platform_folder_structure(service):
             structure[platform][sub] = {"id": sub_id, "created": sub_created}
     return structure
 
-def read_csv_from_dive(file_id, token):
+def read_csv_from_drive(token, file_id, as_text: bool = False):
     if not file_id:
         raise ValueError("file_id is required")
     service, err = authenticate_and_get_service(token)
@@ -144,18 +145,30 @@ def read_csv_from_dive(file_id, token):
             _, done = downloader.next_chunk()
         buffer.seek(0)
     except Exception as e:
-        raise RuntimeError(f"Failed to read CSV from Google Drive: {e}")
+        raise RuntimeError(f"Failed to download file from Google Drive: {e}")
+    if as_text:
+        try:
+            content = buffer.read().decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError("The file is not valid UTF-8 text")
+        if not content:
+            raise ValueError("The text file is empty")
+        return content
     try:
         df = pd.read_csv(buffer)
     except pd.errors.EmptyDataError:
         raise ValueError("The CSV file is empty")
     except pd.errors.ParserError:
         raise ValueError("The file is not a valid CSV")
-    return df      
+    except UnicodeDecodeError:
+        raise ValueError("The CSV file is not valid UTF-8")
+    return df
 
-def mark_status_done(token, file_id, sender_id, status_col, id_col):
+def mark_status_done(token, file_id, sender_ids, status_col, id_col):
     if not file_id:
         raise ValueError("file_id is required")
+    if not sender_ids:
+        raise ValueError("sender_ids list is required and cannot be empty")
     service, err = authenticate_and_get_service(token)
     if err:
         raise RuntimeError(f"Authentication failed: {err}")
@@ -179,29 +192,36 @@ def mark_status_done(token, file_id, sender_id, status_col, id_col):
         raise ValueError(f"Column '{id_col}' not found in CSV")
     if status_col not in df.columns:
         raise ValueError(f"Column '{status_col}' not found in CSV")
-    mask = (df[id_col] == sender_id) & (df[status_col] == "receive")
-    if not mask.any():
-        return {"status": "ok","rows_updated": 0,"message": f"No matching rows found for sender_id={sender_id} with status='receive'"}
-    last_idx = df[mask].index[-1]
-    df.loc[last_idx, status_col] = "True"
-    rows_updated = 1
-    out_buffer = io.BytesIO()
-    df.to_csv(out_buffer, index=False)
-    out_buffer.seek(0)
-    try:
-        media = MediaIoBaseUpload(out_buffer, mimetype="text/csv", resumable=True)
-        service.files().update(fileId=file_id, media_body=media).execute()
-    except Exception as e:
-        raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
-    return {"status": "ok", "rows_updated": rows_updated}
+    results = []
+    total_updated = 0
+    for sender_id in sender_ids:
+        mask = (df[id_col] == sender_id) & (df[status_col] == "receive")
+        if not mask.any():
+            results.append({"sender_id": sender_id,"rows_updated": 0,"message": f"No matching rows found for sender_id={sender_id} with status='receive'"})
+            continue
+        last_idx = df[mask].index[-1]
+        df.loc[last_idx, status_col] = "True"
+        total_updated += 1
+        results.append({"sender_id": sender_id,"rows_updated": 1,"row_index": int(last_idx)})
+    if total_updated > 0:
+        out_buffer = io.BytesIO()
+        df.to_csv(out_buffer, index=False)
+        out_buffer.seek(0)
+        try:
+            media = MediaIoBaseUpload(out_buffer, mimetype="text/csv", resumable=True)
+            service.files().update(fileId=file_id, media_body=media).execute()
+        except Exception as e:
+            raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
+    return {"status": "ok","rows_updated": total_updated,"details": results}
 
-def append_text_file(token, file_id, text_to_append, add_newline=True):
+def delete_matching_rows(token, file_id, valuess, status_col, id_col, status_value="receive", delete_all_matches=False):
     if not file_id:
         raise ValueError("file_id is required")
+    if not valuess:
+        raise ValueError("valuess list is required and cannot be empty")
     service, err = authenticate_and_get_service(token)
     if err:
         raise RuntimeError(f"Authentication failed: {err}")
-
     try:
         drive_request = service.files().get_media(fileId=file_id)
         buffer = io.BytesIO()
@@ -210,28 +230,102 @@ def append_text_file(token, file_id, text_to_append, add_newline=True):
         while not done:
             _, done = downloader.next_chunk()
         buffer.seek(0)
-        existing_content = buffer.read().decode("utf-8")
     except Exception as e:
-        raise RuntimeError(f"Failed to read text file from Google Drive: {e}")
-
-    if existing_content and not existing_content.endswith("\n") and add_newline:
-        existing_content += "\n"
-
-    new_content = existing_content + text_to_append + ("\n" if add_newline else "")
-
-    out_buffer = io.BytesIO(new_content.encode("utf-8"))
-    out_buffer.seek(0)
-
+        raise RuntimeError(f"Failed to read CSV from Google Drive: {e}")
     try:
-        media = MediaIoBaseUpload(out_buffer, mimetype="text/plain", resumable=True)
+        df = pd.read_csv(buffer)
+    except pd.errors.EmptyDataError:
+        raise ValueError("The CSV file is empty")
+    except pd.errors.ParserError:
+        raise ValueError("The existing file is not a valid CSV")
+    if id_col not in df.columns:
+        raise ValueError(f"Column '{id_col}' not found in CSV")
+    if status_col not in df.columns:
+        raise ValueError(f"Column '{status_col}' not found in CSV")
+    results = []
+    total_deleted = 0
+    indices_to_drop = []
+    for sender_id in valuess:
+        mask = (df[id_col] == sender_id) & (df[status_col] == status_value)
+        if not mask.any():
+            results.append({"sender_id": sender_id,"rows_deleted": 0,"message": f"No matching rows found for sender_id={sender_id} with {status_col}='{status_value}'"})
+            continue
+        matching_idx = df[mask].index
+        if delete_all_matches:
+            idx_to_delete = list(matching_idx)
+        else:
+            idx_to_delete = [matching_idx[-1]]  # last match, same as mark_status_done
+        indices_to_drop.extend(idx_to_delete)
+        total_deleted += len(idx_to_delete)
+        results.append({"sender_id": sender_id,"rows_deleted": len(idx_to_delete),"row_indices": [int(i) for i in idx_to_delete]})
+    if total_deleted > 0:
+        df = df.drop(index=indices_to_drop).reset_index(drop=True)
+        out_buffer = io.BytesIO()
+        df.to_csv(out_buffer, index=False)
+        out_buffer.seek(0)
+        try:
+            media = MediaIoBaseUpload(out_buffer, mimetype="text/csv", resumable=True)
+            service.files().update(fileId=file_id, media_body=media).execute()
+        except Exception as e:
+            raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
+    return {"status": "ok", "rows_deleted": total_deleted, "details": results}
+
+def append_to_file(token, file_id, data_to_append, as_text: bool = True, add_newline=True):
+    if not file_id:
+        raise ValueError("file_id is required")
+    service, err = authenticate_and_get_service(token)
+    if err:
+        raise RuntimeError(f"Authentication failed: {err}")
+    try:
+        drive_request = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, drive_request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buffer.seek(0)
+    except Exception as e:
+        raise RuntimeError(f"Failed to download file from Google Drive: {e}")
+    if as_text:
+        try:
+            existing_content = buffer.read().decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError("The file is not valid UTF-8 text")
+        if not isinstance(data_to_append, str):
+            raise ValueError("data_to_append must be a string when as_text=True")
+        if existing_content and not existing_content.endswith("\n") and add_newline:
+            existing_content += "\n"
+        new_content = existing_content + data_to_append + ("\n" if add_newline else "")
+        out_buffer = io.BytesIO(new_content.encode("utf-8"))
+        out_buffer.seek(0)
+        mimetype = "text/plain"
+        bytes_appended = len(data_to_append)
+    else:
+        try:
+            text = buffer.read().decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError("The file is not valid UTF-8 text")
+        if not isinstance(data_to_append, (list, tuple)):
+            raise ValueError("data_to_append must be a list/tuple (a row) when as_text=False")
+        reader = csv.reader(io.StringIO(text))
+        rows = list(reader)
+        rows.append(list(data_to_append))
+        out_str = io.StringIO()
+        writer = csv.writer(out_str, lineterminator="\n")
+        writer.writerows(rows)
+
+        out_buffer = io.BytesIO(out_str.getvalue().encode("utf-8"))
+        out_buffer.seek(0)
+        mimetype = "text/csv"
+        bytes_appended = len(",".join(str(x) for x in data_to_append))
+    try:
+        media = MediaIoBaseUpload(out_buffer, mimetype=mimetype, resumable=True)
         service.files().update(fileId=file_id, media_body=media).execute()
     except Exception as e:
-        raise RuntimeError(f"Failed to write updated text file to Google Drive: {e}")
+        raise RuntimeError(f"Failed to write updated file to Google Drive: {e}")
+    return {"status": "ok", "as_text": as_text, "bytes_appended": bytes_appended}
 
-    return {"status": "ok", "bytes_appended": len(text_to_append)}
-
-
-def update_text_file(token, file_id, old_text, new_text, replace_all=False):
+def update_file(token, file_id, old_text, new_text, as_text: bool = True, replace_all=False):
     if not file_id:
         raise ValueError("file_id is required")
     service, err = authenticate_and_get_service(token)
@@ -247,22 +341,46 @@ def update_text_file(token, file_id, old_text, new_text, replace_all=False):
         buffer.seek(0)
         content = buffer.read().decode("utf-8")
     except Exception as e:
-        raise RuntimeError(f"Failed to read text file from Google Drive: {e}")
-    if old_text not in content:
-        return {"status": "ok", "rows_updated": 0, "message": f"Text '{old_text}' not found in file"}
-    if replace_all:
-        occurrences = content.count(old_text)
-        content = content.replace(old_text, new_text)
+        raise RuntimeError(f"Failed to read file from Google Drive: {e}")
+    if as_text:
+        if old_text not in content:
+            return {"status": "ok", "rows_updated": 0, "message": f"Text '{old_text}' not found in file"}
+        if replace_all:
+            occurrences = content.count(old_text)
+            content = content.replace(old_text, new_text)
+        else:
+            occurrences = 1
+            content = content.replace(old_text, new_text, 1)
+        out_buffer = io.BytesIO(content.encode("utf-8"))
+        out_buffer.seek(0)
+        mimetype = "text/plain"
     else:
-        occurrences = 1
-        content = content.replace(old_text, new_text, 1)
-    out_buffer = io.BytesIO(content.encode("utf-8"))
-    out_buffer.seek(0)
+        reader = csv.reader(io.StringIO(content))
+        rows = list(reader)
+        occurrences = 0
+        for row in rows:
+            for i, cell in enumerate(row):
+                if old_text in cell:
+                    if replace_all:
+                        occurrences += cell.count(old_text)
+                        row[i] = cell.replace(old_text, new_text)
+                    else:
+                        if occurrences == 0:
+                            row[i] = cell.replace(old_text, new_text, 1)
+                            occurrences = 1
+        if occurrences == 0:
+            return {"status": "ok", "rows_updated": 0, "message": f"Text '{old_text}' not found in file"}
+        out_str = io.StringIO()
+        writer = csv.writer(out_str, lineterminator="\n")
+        writer.writerows(rows)
+        out_buffer = io.BytesIO(out_str.getvalue().encode("utf-8"))
+        out_buffer.seek(0)
+        mimetype = "text/csv"
     try:
-        media = MediaIoBaseUpload(out_buffer, mimetype="text/plain", resumable=True)
+        media = MediaIoBaseUpload(out_buffer, mimetype=mimetype, resumable=True)
         service.files().update(fileId=file_id, media_body=media).execute()
     except Exception as e:
-        raise RuntimeError(f"Failed to write updated text file to Google Drive: {e}")
+        raise RuntimeError(f"Failed to write updated file to Google Drive: {e}")
     return {"status": "ok", "rows_updated": occurrences}
 
 @app.route("/connect-drive")
