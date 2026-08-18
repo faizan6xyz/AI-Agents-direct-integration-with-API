@@ -2,6 +2,7 @@ import os
 import re
 import time
 import json
+import Instagram.schedule_video as sccc
 import logging
 import requests
 from urllib.parse import urlparse
@@ -122,7 +123,7 @@ def publish_container(access_token: str, ig_user_id: str, creation_id: str) -> s
     published = _post(f"{ig_user_id}/media_publish", {"creation_id": creation_id, "access_token": access_token})
     return published["id"]
 
-def post_photo(access_token: str, ig_user_id: str, image_url: str, caption: str = "", media_size: int = None, publish: bool = True, ) -> str:
+def post_photo(timmmm,access_token: str, ig_user_id: str, image_url: str, caption: str = "", media_size: int = None, publish: bool = True, ) -> str:
     _validate_media_url(image_url)
     caption = _check_caption(caption)
     if media_size is not None and media_size > MAX_PHOTO_BYTES:
@@ -131,10 +132,12 @@ def post_photo(access_token: str, ig_user_id: str, image_url: str, caption: str 
     container = _post(f"{ig_user_id}/media", params)
     creation_id = container["id"]
     if not publish:
+        sccc.insert_time(ig_user_id,creation_id,timmmm,access_token)
         return creation_id
+
     return publish_container(access_token, ig_user_id, creation_id)
 
-def post_video(access_token: str, ig_user_id: str, height: int, width: int, video_url: str, media_size: int, caption: str = "", as_reel: bool = True, cover_url: str = None,publish: bool = True, media_duration: int = 0, ) -> str:
+def post_video(timmmm,access_token: str, ig_user_id: str, height: int, width: int, video_url: str, media_size: int, caption: str = "", as_reel: bool = True, cover_url: str = None,publish: bool = True, media_duration: int = 0, ) -> str:
     _validate_media_url(video_url)
     if cover_url is not None:
         if not as_reel:
@@ -161,10 +164,11 @@ def post_video(access_token: str, ig_user_id: str, height: int, width: int, vide
     creation_id = container["id"]
     wait_for_container(access_token, creation_id)
     if not publish:
+        sccc.insert_time(ig_user_id,creation_id,timmmm,access_token)
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
  
-def post_carousel( access_token: str, ig_user_id: str,   media_size: list[int], media_duration: list[int], media_urls: list[str], is_video: list[bool], caption: str = "", publish: bool = True, ) -> str:
+def post_carousel(timmmm, access_token: str, ig_user_id: str,   media_size: list[int], media_duration: list[int], media_urls: list[str], is_video: list[bool], caption: str = "", publish: bool = True, ) -> str:
     if len(media_urls) != len(is_video):
         raise ValueError("media_urls and is_video must be the same length")
     if not (2 <= len(media_urls) <= 5):
@@ -197,10 +201,11 @@ def post_carousel( access_token: str, ig_user_id: str,   media_size: list[int], 
     container = _post(f"{ig_user_id}/media", params)
     creation_id = container["id"]
     if not publish:
+        sccc.insert_time(ig_user_id,creation_id,timmmm,access_token)
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
 
-def post_story( access_token: str, ig_user_id: str, media_size: int, media_url: str, is_video: bool = False, publish: bool = True, media_duration: int = 0, ) -> str:
+def post_story( timmmm,access_token: str, ig_user_id: str, media_size: int, media_url: str, is_video: bool = False, publish: bool = True, media_duration: int = 0, ) -> str:
     _validate_media_url(media_url)
     if is_video:
         if media_size > MAX_VIDEO_BYTES:
@@ -220,6 +225,7 @@ def post_story( access_token: str, ig_user_id: str, media_size: int, media_url: 
     if is_video:
         wait_for_container(access_token, creation_id)
     if not publish:
+        sccc.insert_time(ig_user_id,creation_id,timmmm,access_token)
         return creation_id
     return publish_container(access_token, ig_user_id, creation_id)
 

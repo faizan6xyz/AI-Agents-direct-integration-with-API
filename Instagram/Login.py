@@ -24,12 +24,24 @@ STATE_MAX_AGE = 600  # seconds
 TABLE_NAME = "Instagram"
 SCOPE = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments"
 BASE_URL = ""
+
 def check_user_id(token, uuser_id):
     rows = dbimp.select_rows(token, TABLE_NAME, select="id", filters={"id": uuser_id})
     exist = rows[0] if rows else None
     if not exist:
         return False
     return True
+
+def parse_datetime(value: str, require_tz: bool = True):
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if require_tz and dt.tzinfo is None:
+        return None
+    return dt
 
 def _validate_int(value, field_name="value") -> None:
     if not isinstance(value, int) or isinstance(value, bool):
@@ -200,6 +212,7 @@ def story(account_id):
     media_size = data.get("media_size")
     publish = data.get("publish")
     duration = data.get("duration")
+    timee = data.get("time") or {}
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -213,8 +226,16 @@ def story(account_id):
         return jsonify({"success": False, "message": str(e)}), 400
     video_type = str(is_video).strip().lower() == "true"
     publish_now = str(publish).strip().lower() == "true"
+    timee = parse_datetime(timee)
+    if timee is None:
+        return {"error": "invalid type or missing date/time"}, 400
+    now = datetime.now(timezone.utc) 
+    lb = datetime.now(timezone.utc) + timedelta(seconds=180)
+    up = datetime.now(timezone.utc) + timedelta(hours=23)
+    if timee < lb  or timee < now or timee > up :
+        return {"error": "invalid time for the posting"}, 400
     try:
-        id_post = uploadd.post_story( access_token=access_token, ig_user_id=account_id, media_size=media_size, media_url=media_url, publish=publish_now, is_video=video_type, media_duration=duration, )
+        id_post = uploadd.post_story( access_token=access_token, ig_user_id=account_id, media_size=media_size, media_url=media_url, publish=publish_now, is_video=video_type, media_duration=duration,timmmm=timee )
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post story: {e}"}), 500
     if id_post:
@@ -231,6 +252,7 @@ def photo(account_id):
     media_size = data.get("media_size")
     publish = data.get("publish")
     caption = data.get("caption", "")
+    timee = data.get("time") or {}
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -241,8 +263,16 @@ def photo(account_id):
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
     publish_now = str(publish).strip().lower() == "true"
+    timee = parse_datetime(timee)
+    if timee is None:
+        return {"error": "invalid or missing date/time"}, 400
+    now = datetime.now(timezone.utc) 
+    lb = datetime.now(timezone.utc) + timedelta(seconds=180)
+    up = datetime.now(timezone.utc) + timedelta(hours=23)
+    if timee < lb  or timee < now or timee > up :
+        return {"error": "invalid time for the posting"}, 400
     try:
-        id_post = uploadd.post_photo( access_token=access_token, ig_user_id=account_id, image_url=media_url, caption=caption, media_size=media_size, publish=publish_now,)
+        id_post = uploadd.post_photo( access_token=access_token, ig_user_id=account_id, image_url=media_url, caption=caption, media_size=media_size, publish=publish_now,timmmm=timee)
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post photo: {e}"}), 500
     if id_post:
@@ -264,6 +294,7 @@ def video(account_id):
     height = data.get("height")
     width = data.get("width")
     duration = data.get("duration")
+    timee = data.get("time") or {}
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -280,11 +311,19 @@ def video(account_id):
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
     publish_now = str(publish).strip().lower() == "true"
+    timee = parse_datetime(timee)
+    if timee is None:
+        return {"error": "invalid or missing date/time"}, 400
+    now = datetime.now(timezone.utc) 
+    lb = datetime.now(timezone.utc) + timedelta(seconds=180)
+    up = datetime.now(timezone.utc) + timedelta(hours=23)
+    if timee < lb  or timee < now or timee > up :
+        return {"error": "invalid time for the posting"}, 400
     as_reeel = str(as_reel).strip().lower() == "true"
     if cover_url and not as_reeel:
         return jsonify({"success": False, "message": "cover_url is only supported when as_reel is true"}), 400
     try:
-        id_post = uploadd.post_video( access_token=access_token, ig_user_id=account_id, video_url=media_url, media_size=media_size, caption=caption, publish=publish_now, cover_url=cover_url if as_reeel else None, as_reel=as_reeel, media_duration=duration, width=width, height=height,)
+        id_post = uploadd.post_video( access_token=access_token, ig_user_id=account_id, video_url=media_url, media_size=media_size, caption=caption, publish=publish_now, cover_url=cover_url if as_reeel else None, as_reel=as_reeel, media_duration=duration, width=width, height=height,timmmm=timee)
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post video: {e}"}), 500
     if id_post:
@@ -303,6 +342,7 @@ def carousel(account_id):
     media_duration = data.get("media_duration", [])
     media_urls = data.get("media_urls", [])
     is_video = data.get("is_video", [])
+    timee = data.get("time") or {}
     if not media_urls or not is_video or not media_size or not media_duration:
         return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration are all required"}), 400
     if not (len(media_urls) == len(is_video) == len(media_size) == len(media_duration)):
@@ -315,8 +355,16 @@ def carousel(account_id):
     if any(v is None for v in media_durationn):
         return jsonify({"success": False, "message": "one or more media_duration values are not valid ints"}), 400
     publish_now = str(publish).strip().lower() == "true"
+    timee = parse_datetime(timee)
+    if timee is None:
+        return {"error": "invalid or missing date/time"}, 400
+    now = datetime.now(timezone.utc) 
+    lb = datetime.now(timezone.utc) + timedelta(seconds=180)
+    up = datetime.now(timezone.utc) + timedelta(hours=23)
+    if timee < lb  or timee < now or timee > up :
+        return {"error": "invalid time for the posting"}, 400
     try:
-        id_post = uploadd.post_carousel( access_token=access_token, ig_user_id=account_id, is_video=is_videoo, media_size=media_sizee, media_duration=media_durationn, media_urls=media_urls, publish=publish_now, caption=caption, )
+        id_post = uploadd.post_carousel( access_token=access_token, ig_user_id=account_id, is_video=is_videoo, media_size=media_sizee, media_duration=media_durationn, media_urls=media_urls, publish=publish_now, caption=caption, timmmm=timee)
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post carousel: {e}"}), 500
     if id_post:
