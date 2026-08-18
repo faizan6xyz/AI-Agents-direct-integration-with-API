@@ -78,7 +78,7 @@ def whatsapp_callback():
     expiry_ts = datetime.now(timezone.utc) + timedelta(hours=1)
     token = au.jsonspoof(user_id=user_id, timestamp=expiry_ts)
     expp = expire_time.isoformat()
-    payload = {"user_id": user_id,"access": long_token,"timestamp": times , "token":token , "bussiness_id":waba_id, "account_id":phone_number_id,"phone_no":display_number,"expire":expp}
+    payload = {"user_id": user_id,"access": long_token,"timestamp": times , "token":token , "account_id":phone_number_id,"phone_no":display_number,"expire":expp}
     signed_payload = serializer.dumps(payload)
     resp = requests.post(f"{BASE_URL}/auth/whatsapp/callbackshi", json={"data": signed_payload}, timeout=5)
     return (resp.content, resp.status_code, resp.headers.items())
@@ -94,11 +94,10 @@ def oauth_callbac():
     user_id = data.get("user_id")
     access = data.get("access")
     account_id = data.get("account_id")
-    bussiness_id = data.get("bussiness_id")
     phone_no = data.get("phone_no")
     expire = data.get("expire")
     timestamp = data.get("timestamp")
-    if not token or not user_id or not access or not account_id or not bussiness_id or not phone_no or not expire or not timestamp :
+    if not token or not user_id or not access or not account_id or not phone_no or not expire or not timestamp :
         return jsonify({"error": "missing required fields"}), 400
     try:
         datetime.fromisoformat(timestamp)
@@ -106,7 +105,7 @@ def oauth_callbac():
     except ValueError:
         return jsonify({"error": "invalid timestamp/expire format"}), 400
     try:
-        dbimp.update_rows(token,TABLE_NAME,{"Access_token": access,"Timestamp": timestamp ,"Token_expire": expire ,"Bussiness_id": bussiness_id,"Account_id": account_id ,"Phone_no": phone_no,},filters={"id": user_id},)
+        dbimp.update_rows(token,TABLE_NAME,{"Access_token": access,"Timestamp": timestamp ,"Token_expire": expire ,"Account_id": account_id ,"Phone_no": phone_no,},filters={"id": user_id},)
     except Exception as e:
         return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
     return jsonify({"status": "ok"}), 200

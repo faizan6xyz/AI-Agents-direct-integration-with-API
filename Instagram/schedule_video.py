@@ -38,7 +38,7 @@ def delete_by_id(row_id):
     conn.commit()
     conn.close()
 
-# init_db()
+init_db()
 # timmm = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat()
 # insert_time("sdidfbdzdf", "fgfgfd", timmm, "dsajhbdhf")
 
