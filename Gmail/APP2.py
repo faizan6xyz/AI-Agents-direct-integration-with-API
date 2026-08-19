@@ -9,10 +9,13 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import Gmail.Read_mails as gc  # rename to match your actual module filename
 import authnew as au
+import base64 
+import json
 from googleapiclient.discovery import build
 import requests
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import Drive.dep as dp
+import database.UserDB as dbimp
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gmail_api")
@@ -28,6 +31,7 @@ serializer = URLSafeTimedSerializer(app.secret_key)
 STATE_MAX_AGE = 600  # seconds
 MESSAGE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{5,50}$')
 USER_ID_RE = re.compile(r'^[a-zA-Z0-9_.@-]{1,100}$')
+PUBSUB_VERIFICATION_TOKEN = os.environ.get("PUBSUB_VERIFICATION_TOKEN")  # set this in env
 LABEL_NAME_RE = re.compile(r'^[\w\s/.-]{1,100}$')
 BASE_URL = ""
 limiter = Limiter(get_remote_address, app=app, default_limits=["60 per minute"])
@@ -104,7 +108,6 @@ def gmail_oauth_callback():
     signed_payload = serializer.dumps(payload)
     resp = requests.post(f"{BASE_URL}/auth/gmail/callbackshi", json={"data": signed_payload}, timeout=5)
     return (resp.content, resp.status_code, resp.headers.items())
-    #  gc.save_tokens(user_id, creds, email_addr=email_addr)
 
 @app.route("/auth/gmail/callbackshi", methods=["POST"])
 def oauth_callbac():
@@ -432,6 +435,42 @@ def get_label_count(label_id):
                         "messages_unread": label.get("messagesUnread", 0),
                         "threads_total": label.get("threadsTotal", 0),
                         "threads_unread": label.get("threadsUnread", 0),})
+    except Exception as e:
+        return safe_error(e)
+
+@app.route('/labels/<label_id>/messages', methods=['GET'])
+@limiter.limit("30 per minute")
+@require_api_key
+def get_label_messages(label_id):
+    token = request.args.get("token")
+    user_id, token = get_valid_user_id(token)
+    if not user_id:
+        return jsonify({"error": "valid 'user_id' is required"}), 400
+    if not token:
+        return jsonify({"status": False}), 403
+    if not label_id:
+        return jsonify({"error": "valid 'label_id' is required"}), 400
+    max_results = request.args.get("max_results", default=20, type=int)
+    max_results = max(1, min(max_results, 100))  
+    page_token = request.args.get("page_token")
+    include_details = request.args.get("include_details", "false").lower() == "true"
+    try:
+        service = gc.get_service(token=token, user_id=user_id)
+        if not service:
+            return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
+        list_kwargs = {"userId": "me", "labelIds": [label_id], "maxResults": max_results,}
+        if page_token:
+            list_kwargs["pageToken"] = page_token
+        resp = service.users().messages().list(**list_kwargs).execute()
+        messages = resp.get("messages", [])
+        if include_details:
+            detailed = []
+            for m in messages:
+                msg = service.users().messages().get( userId="me",id=m["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"]).execute()
+                headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+                detailed.append({"id": msg.get("id"), "threadId": msg.get("threadId"), "snippet": msg.get("snippet"), "subject": headers.get("Subject"), "from": headers.get("From"), "date": headers.get("Date"),  })
+            messages = detailed
+        return jsonify({"label_id": label_id,"messages": messages,"result_size_estimate": resp.get("resultSizeEstimate", 0),"next_page_token": resp.get("nextPageToken"),})
     except Exception as e:
         return safe_error(e)
 
