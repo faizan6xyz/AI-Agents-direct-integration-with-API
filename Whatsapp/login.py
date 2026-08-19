@@ -126,38 +126,49 @@ def receive_webhook_message():
         log.error("Rejected webhook POST: invalid or missing signature.")
         return jsonify({"status": "invalid signature"}), 403
     data = request.get_json(silent=True) or {}
-    try:
-        entries = data.get("entry", [])
-        for entry in entries:
-            changes = entry.get("changes", [])
-            for change in changes:
-                value = change.get("value", {})
-                messages = value.get("messages", [])
-                my_phone_number_id = value.get("metadata", {}).get("phone_number_id")
-                user_row = get_user_for_phone_number_id(my_phone_number_id)
-                if not user_row:
-                    log.warning(f"Rejected webhook payload: unrecognized phone_number_id ({my_phone_number_id}).")
-                    continue
-                user_id = user_row["id"]
-                files = dbimp.select_rows_web(TABLE_NAME,select="File,Access_token",filters={"Account_id": my_phone_number_id},)
-                file = files[0]["File"] if files else None
-                acc = files[0]["Access_token"] if files else None
-                if not file or not acc:
-                    log.warning(f"No campaign file/access token found for phone_number_id ({my_phone_number_id}).")
-                    continue
-                for msg in messages:
+    entries = data.get("entry", [])
+    for entry in entries:
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+            my_phone_number_id = value.get("metadata", {}).get("phone_number_id")
+            user_row = get_user_for_phone_number_id(my_phone_number_id)
+            if not user_row:
+                log.warning(f"Rejected webhook payload: unrecognized phone_number_id ({my_phone_number_id}).")
+                continue
+            user_id = user_row["id"]
+            files = dbimp.select_rows_web(TABLE_NAME, select="File,Access_token", filters={"Account_id": my_phone_number_id})
+            file = files[0]["File"] if files else None
+            acc = files[0]["Access_token"] if files else None
+            if not file or not acc:
+                log.warning(f"No campaign file/access token found for phone_number_id ({my_phone_number_id}).")
+                continue
+            timee = datetime.now(timezone.utc) + timedelta(hours=1)
+            token = au.jsonspoof(user_id=user_id, timestamp=timee)
+            for msg in messages:
+                try:
                     sender_wa_id = msg.get("from")
                     msg_type = msg.get("type")
-                    body = None
-                    if msg_type == "text":
-                        body = msg.get("text", {}).get("body")
+                    body = msg.get("text", {}).get("body") if msg_type == "text" else None
                     if body and body.strip().lower() == "no":
                         send_whatsapp_message(PHONE_NUMBER_ID=my_phone_number_id,ACCESS_TOKEN=acc,recipient_number=sender_wa_id,message_body="Thanks for replying , We recived your message ",)
-                    timee = datetime.now(timezone.utc) + timedelta(hours=1)
-                    token = au.jsonspoof(user_id=user_id, timestamp=timee)
-                    ss = dp.mark_status_done(file_id=file,token=token,sender_ids=sender_wa_id,status_col="status",id_col="sender_id",)
-    except Exception as e:
-        log.exception(f"Error processing webhook payload: {e}")
+                    if body and body.strip().lower() == "yes":
+                        workflow_map = dp.read_csv_from_drive(token, "Whatsapp", "workflowmessage.json", as_json=True)
+                        campaigns_df = dp.read_csv_from_drive(token, "Whatsapp", "campains.txt", as_json=False)
+                        matches = campaigns_df.loc[campaigns_df['phone_no'] == sender_wa_id, "campaign_id"]
+                        if matches.empty:
+                            log.warning(f"No campaign match found for {sender_wa_id} on 'yes' reply.")
+                        else:
+                            campaign_id = matches.iloc[-1]
+                            reply = workflow_map.get(campaign_id, {}).get("reply")
+                            if reply:
+                                send_whatsapp_message(PHONE_NUMBER_ID=my_phone_number_id,ACCESS_TOKEN=acc,recipient_number=sender_wa_id,message_body=reply,)
+                            else:
+                                log.warning(f"No reply template found for campaign_id={campaign_id}.")
+                    ss = dp.mark_status_done(token, "Whatsapp", "campains.txt", [sender_wa_id], "recieve_time", "phone_no")
+                    log.info(f"mark_status_done result for {sender_wa_id}: {ss}")
+                except Exception as e:
+                    log.exception(f"Failed processing message from {msg.get('from')}: {e}")
     return jsonify({"status": "received"}), 200
 
 @app.route("/send-test", methods=["POST"])

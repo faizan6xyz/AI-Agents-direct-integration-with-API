@@ -33,30 +33,39 @@ def receive_webhook():
     if not verify_signature(request):
         return "Invalid signature", 403
     data = request.get_json()
-    if data.get("object") == "instagram":
-        for entry in data.get("entry", []):
-            ig_account_id = entry.get("id")
-            for change in entry.get("changes", []):
-                if change.get("field") == "comments":
-                    value = change["value"]
-                    from_user_id = value.get("from", {}).get("id")
-                    media_id = value.get("media", {}).get("id")   
-            access_token = dbimp.select_rows_web(table,select="id,File",filters={"Account_id":ig_account_id}) 
-            access = access_token[0] if access_token else None
-            user_id = access["id"]
-            file_id = access["file"]
-            expiry_ts = datetime.now(timezone.utc) + timedelta(hours=1)
-            token = au.jsonspoof(user_id=user_id, timestamp=expiry_ts)
-            if not access_token :
-                return 
-            df = dp.read_csv_from_dive(token=token,file_id=file_id)
-            message = df.loc[(df["Post_id"] == media_id) & (df["message"].notna()), "message"].drop_duplicates().iloc[0]
-            if not from_user_id or not message:
-                return jsonify({"error": "from_user_id and message are required"}), 400
-            result = uploadd.send_message(from_user_id, message, access_token)
-            if not result["success"]:
-                return jsonify(result), 400
-            return jsonify(result), 200
+    if data.get("object") != "instagram":
+        return jsonify({"status": "ignored"}), 200
+    for entry in data.get("entry", []):
+        ig_account_id = entry.get("id")
+        from_user_id = None
+        media_id = None
+        for change in entry.get("changes", []):
+            if change.get("field") != "comments":
+                continue
+            value = change.get("value")
+            if not value:
+                continue
+            from_user_id = value.get("from", {}).get("id")
+            media_id = value.get("media", {}).get("id")
+        if not from_user_id or not media_id:
+            continue  # nothing usable in this entry, move to next
+        access_rows = dbimp.select_rows_web(table, select="id,File", filters={"Account_id": ig_account_id})
+        access = access_rows[0] if access_rows else None
+        if not access:
+            return jsonify({"error": "no access record found for account"}), 404
+        user_id = access["id"]
+        expiry_ts = datetime.now(timezone.utc) + timedelta(hours=1)
+        token = au.jsonspoof(user_id=user_id, timestamp=expiry_ts)
+        df = dp.read_csv_from_drive(token, "Instagram", "workflowcomment.json", as_json=True)
+        dfid = df.get(media_id, {})
+        reply = dfid.get("reply")
+        if not reply:
+            return jsonify({"error": "from_user_id and reply are required"}), 400
+        result = uploadd.send_message(from_user_id, reply, token)  # <- fixed: use token, not access_token list
+        if not result["success"]:
+            return jsonify(result), 400
+        return jsonify(result), 200
+    return jsonify({"status": "no matching comment changes"}), 200
 
 def verify_signature(req):
     signature = req.headers.get("X-Hub-Signature-256", "")
