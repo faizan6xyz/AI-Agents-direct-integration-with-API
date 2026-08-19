@@ -43,28 +43,11 @@ campaigns_content3 = "media_id,posted,caption,thumbnail,posted_time"
 campaigns_content4 = "media_id,views,likes,reach,replies,shares,navigation,follows,profile_activity,hour,story_is,thumbnail,time"
 campaigns_content5 = "media_id,publish_at,impression,likes,comments,shares,clicks,engagements,profile_views,follower_gained,saves,reaction,send"
 
-def hashmeta(text,filename):
-    x = hmac.new(SECRET_KEY,text.encode("utf-8"),hashlib.sha256).hexdigest()
-    return {filename: {"hashed": x}}
 
-instagram_metadata = {**hashmeta(campaigns_content2, "postanalysis.txt"),**hashmeta(campaigns_content3, "postIds.txt"),**hashmeta(campaigns_content4, "reachanalysis.txt"),}
-
-filesss = {"Gmail": {"campains.txt": campaigns_content,
-                    "metadata.json": json.dumps(hashmeta(campaigns_content,"campains.txt"), indent=2),
-                    "workflowmessage.json": "{}",},
-          "Whatsapp": {"campains.txt": campaigns_content1,
-                    "metadata.json": json.dumps(hashmeta(campaigns_content1,"campains.txt"), indent=2),
-                    "workflowmessage.json": "{}",},
-          "Instagram": {"workflowmessage.json": "{}",
-                    "workflowcomment.json": "{}",
-                    "postanalysis.txt": campaigns_content2,
-                    "postIds.txt": campaigns_content3,
-                    "reachanalysis.txt": campaigns_content4,
-                    "metadata.json": json.dumps(instagram_metadata, indent=2),},
-          "linkedln": {"workflowmessage.json": "{}",
-                    "workflowcomment.json": "{}",
-                    "postanalysis.txt": campaigns_content5,
-                    "metadata.json": json.dumps(hashmeta(campaigns_content5,"postanalysis.txt"), indent=2), },}
+filesss = {"Gmail": {"campains.txt": campaigns_content, "workflowmessage.json": "{}",},
+          "Whatsapp": {"campains.txt": campaigns_content1,"workflowmessage.json": "{}",},
+          "Instagram": {"workflowmessage.json": "{}","workflowcomment.json": "{}","postanalysis.txt": campaigns_content2,"postIds.txt": campaigns_content3,"reachanalysis.txt": campaigns_content4},
+          "Linkedln": {"workflowmessage.json": "{}","workflowcomment.json": "{}", "postanalysis.txt": campaigns_content5 },}
 
 def save_tokens(token, user_id, access_token, refresh_token, expiry):
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -168,7 +151,7 @@ def create_platform_folder_structure(service):
                 structure[applic][platform][sub] = {"id": sub_id, "created": sub_created}
     return structure
 
-def create_files_in_folders(service, file_content, structure):
+def create_files_in_folders(token, user_id, service, file_content, structure):
     created_files = {}
     for platform, files in file_content.items():
         folder_id = structure[APP_FOLDER][platform]["analysis"]["id"]
@@ -179,17 +162,34 @@ def create_files_in_folders(service, file_content, structure):
             mime_type = "application/json" if filename.endswith(".json") else "text/plain"
             file_metadata = {"name": filename, "parents": [folder_id]}
             media = MediaIoBaseUpload(BytesIO(content), mimetype=mime_type, resumable=True)
-            created = service.files().create(body=file_metadata,media_body=media,fields="id, name, parents").execute()
+            created = service.files().create(
+                body=file_metadata, media_body=media, fields="id, name, parents").execute()
             created_files[platform][filename] = created["id"]
-            print(f"[created] {APP_FOLDER}/{platform}/analysis/{filename} -> id={created['id']}")
+            x = hmac.new(SECRET_KEY, content, hashlib.sha256).hexdigest()
+            dbimp.update_rows(token,platform,{filename: created["id"], f"{filename}_hash": x},{"id": user_id})
     return created_files
 
-def read_csv_from_drive(token, file_id, as_text: bool = False):
-    if not file_id:
-        raise ValueError("file_id is required")
+def _resolve_and_verify_file(token, platform, filename):
+    if not platform or not filename:
+        raise ValueError("filename and platform are required")
     service, err = authenticate_and_get_service(token)
     if err:
         raise RuntimeError(f"Authentication failed: {err}")
+    user_id_data = au.jp(token)
+    user_id = user_id_data["user"] if user_id_data else None
+    if not user_id:
+        raise RuntimeError("Failed to resolve user_id from token")
+    try:
+        filesss = dbimp.select_rows(token, platform, select=f"{filename},{filename}_hash", filters={"id": user_id})
+    except Exception as e:
+        raise RuntimeError(f"Failed to select file record: {e}")
+    row = filesss[0] if filesss else None
+    if not row:
+        raise ValueError(f"No file record found for '{filename}'")
+    file_id = row.get(filename)
+    hashed = row.get(f"{filename}_hash")
+    if not file_id:
+        raise ValueError(f"No file_id found for '{filename}'")
     try:
         drive_request = service.files().get_media(fileId=file_id)
         buffer = io.BytesIO()
@@ -200,13 +200,25 @@ def read_csv_from_drive(token, file_id, as_text: bool = False):
         buffer.seek(0)
     except Exception as e:
         raise RuntimeError(f"Failed to download file from Google Drive: {e}")
-    if as_text:
+    buffer_hash = hmac.new(SECRET_KEY, buffer.getvalue(), hashlib.sha256).hexdigest()
+    if hashed != buffer_hash:
+        raise ValueError("Hash mismatch: file integrity check failed")
+    buffer.seek(0)
+    return service, file_id, buffer
+
+def read_csv_from_drive(token, platform, filename, as_json: bool = False):
+    service, file_id, buffer = _resolve_and_verify_file(token, platform, filename)
+    if as_json:
         try:
-            content = buffer.read().decode("utf-8")
+            raw = buffer.read().decode("utf-8")
         except UnicodeDecodeError:
             raise ValueError("The file is not valid UTF-8 text")
-        if not content:
-            raise ValueError("The text file is empty")
+        if not raw.strip():
+            raise ValueError("The JSON file is empty")
+        try:
+            content = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"The file is not valid JSON: {e}")
         return content
     try:
         df = pd.read_csv(buffer)
@@ -218,30 +230,17 @@ def read_csv_from_drive(token, file_id, as_text: bool = False):
         raise ValueError("The CSV file is not valid UTF-8")
     return df
 
-def mark_status_done(token, file_id, sender_ids, status_col, id_col):
-    if not file_id:
-        raise ValueError("file_id is required")
+def mark_status_done(token, platform, filename, sender_ids, status_col, id_col):   # Works on a CSV file. For each ID in sender_ids:
     if not sender_ids:
         raise ValueError("sender_ids list is required and cannot be empty")
-    service, err = authenticate_and_get_service(token)
-    if err:
-        raise RuntimeError(f"Authentication failed: {err}")
-    try:
-        drive_request = service.files().get_media(fileId=file_id)
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, drive_request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buffer.seek(0)
-    except Exception as e:
-        raise RuntimeError(f"Failed to read CSV from Google Drive: {e}")
+    service, file_id, buffer = _resolve_and_verify_file(token, platform, filename)
     try:
         df = pd.read_csv(buffer)
     except pd.errors.EmptyDataError:
         raise ValueError("The CSV file is empty")
     except pd.errors.ParserError:
         raise ValueError("The existing file is not a valid CSV")
+
     if id_col not in df.columns:
         raise ValueError(f"Column '{id_col}' not found in CSV")
     if status_col not in df.columns:
@@ -251,41 +250,32 @@ def mark_status_done(token, file_id, sender_ids, status_col, id_col):
     for sender_id in sender_ids:
         mask = (df[id_col] == sender_id) & (df[status_col] == "receive")
         if not mask.any():
-            results.append({"sender_id": sender_id,"rows_updated": 0,"message": f"No matching rows found for sender_id={sender_id} with status='receive'"})
+            results.append({"sender_id": sender_id, "rows_updated": 0,
+                             "message": f"No matching rows found for sender_id={sender_id} with status='receive'"})
             continue
         last_idx = df[mask].index[-1]
-        df.loc[last_idx, status_col] = "True"
+        df.loc[last_idx, status_col] = datetime.now(timezone.utc).isoformat()
         total_updated += 1
-        results.append({"sender_id": sender_id,"rows_updated": 1,"row_index": int(last_idx)})
+        results.append({"sender_id": sender_id, "rows_updated": 1, "row_index": int(last_idx)})
     if total_updated > 0:
         out_buffer = io.BytesIO()
         df.to_csv(out_buffer, index=False)
         out_buffer.seek(0)
+        new_bytes = out_buffer.getvalue()
+        new_hash = hmac.new(SECRET_KEY, new_bytes, hashlib.sha256).hexdigest()
         try:
+            out_buffer.seek(0)
             media = MediaIoBaseUpload(out_buffer, mimetype="text/csv", resumable=True)
             service.files().update(fileId=file_id, media_body=media).execute()
         except Exception as e:
             raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
-    return {"status": "ok","rows_updated": total_updated,"details": results}
+        dbimp.update_rows(token, platform, {f"{filename}_hash": new_hash}, {"id": file_id})
+    return {"status": "ok", "rows_updated": total_updated, "details": results}
 
-def delete_matching_rows(token, file_id, valuess, status_col, id_col, status_value="receive", delete_all_matches=False):
-    if not file_id:
-        raise ValueError("file_id is required")
+def delete_matching_rows(token, platform, filename, valuess, status_col, id_col,status_value="receive", delete_all_matches=False): # deletes rows where it matches.
     if not valuess:
         raise ValueError("valuess list is required and cannot be empty")
-    service, err = authenticate_and_get_service(token)
-    if err:
-        raise RuntimeError(f"Authentication failed: {err}")
-    try:
-        drive_request = service.files().get_media(fileId=file_id)
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, drive_request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buffer.seek(0)
-    except Exception as e:
-        raise RuntimeError(f"Failed to read CSV from Google Drive: {e}")
+    service, file_id, buffer = _resolve_and_verify_file(token, platform, filename)
     try:
         df = pd.read_csv(buffer)
     except pd.errors.EmptyDataError:
@@ -302,45 +292,51 @@ def delete_matching_rows(token, file_id, valuess, status_col, id_col, status_val
     for sender_id in valuess:
         mask = (df[id_col] == sender_id) & (df[status_col] == status_value)
         if not mask.any():
-            results.append({"sender_id": sender_id,"rows_deleted": 0,"message": f"No matching rows found for sender_id={sender_id} with {status_col}='{status_value}'"})
+            results.append({"sender_id": sender_id, "rows_deleted": 0,"message": f"No matching rows found for sender_id={sender_id} with {status_col}='{status_value}'"})
             continue
         matching_idx = df[mask].index
-        if delete_all_matches:
-            idx_to_delete = list(matching_idx)
-        else:
-            idx_to_delete = [matching_idx[-1]]  # last match, same as mark_status_done
+        idx_to_delete = list(matching_idx) if delete_all_matches else [matching_idx[-1]]
         indices_to_drop.extend(idx_to_delete)
         total_deleted += len(idx_to_delete)
-        results.append({"sender_id": sender_id,"rows_deleted": len(idx_to_delete),"row_indices": [int(i) for i in idx_to_delete]})
+        results.append({"sender_id": sender_id, "rows_deleted": len(idx_to_delete),"row_indices": [int(i) for i in idx_to_delete]})
     if total_deleted > 0:
         df = df.drop(index=indices_to_drop).reset_index(drop=True)
         out_buffer = io.BytesIO()
         df.to_csv(out_buffer, index=False)
         out_buffer.seek(0)
+        new_bytes = out_buffer.getvalue()
+        new_hash = hmac.new(SECRET_KEY, new_bytes, hashlib.sha256).hexdigest()
         try:
+            out_buffer.seek(0)
             media = MediaIoBaseUpload(out_buffer, mimetype="text/csv", resumable=True)
             service.files().update(fileId=file_id, media_body=media).execute()
         except Exception as e:
             raise RuntimeError(f"Failed to write updated CSV to Google Drive: {e}")
+        dbimp.update_rows(token, platform, {f"{filename}_hash": new_hash}, {"id": file_id})
     return {"status": "ok", "rows_deleted": total_deleted, "details": results}
 
-def append_to_file(token, file_id, data_to_append, as_text: bool = True, add_newline=True):
-    if not file_id:
-        raise ValueError("file_id is required")
-    service, err = authenticate_and_get_service(token)
-    if err:
-        raise RuntimeError(f"Authentication failed: {err}")
-    try:
-        drive_request = service.files().get_media(fileId=file_id)
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, drive_request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buffer.seek(0)
-    except Exception as e:
-        raise RuntimeError(f"Failed to download file from Google Drive: {e}")
-    if as_text:
+def append_to_file(token, platform, filename, data_to_append, as_json: bool = False,as_text: bool = True, add_newline=True):   # Adds new content to the end of a file without replacing what's there.
+    service, file_id, buffer = _resolve_and_verify_file(token, platform, filename)
+    if as_json:
+        try:
+            raw = buffer.read().decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError("The file is not valid UTF-8 text")
+        try:
+            content = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as e:
+            raise ValueError(f"The file is not valid JSON: {e}")
+        if not isinstance(content, dict):
+            raise ValueError("JSON append target must be a dict at the root")
+        if not isinstance(data_to_append, dict):
+            raise ValueError("data_to_append must be a dict when as_json=True")
+        content.update(data_to_append)
+        new_bytes = json.dumps(content, ensure_ascii=False).encode("utf-8")
+        out_buffer = io.BytesIO(new_bytes)
+        out_buffer.seek(0)
+        mimetype = "application/json"
+        bytes_appended = len(new_bytes)
+    elif as_text:
         try:
             existing_content = buffer.read().decode("utf-8")
         except UnicodeDecodeError:
@@ -350,7 +346,8 @@ def append_to_file(token, file_id, data_to_append, as_text: bool = True, add_new
         if existing_content and not existing_content.endswith("\n") and add_newline:
             existing_content += "\n"
         new_content = existing_content + data_to_append + ("\n" if add_newline else "")
-        out_buffer = io.BytesIO(new_content.encode("utf-8"))
+        new_bytes = new_content.encode("utf-8")
+        out_buffer = io.BytesIO(new_bytes)
         out_buffer.seek(0)
         mimetype = "text/plain"
         bytes_appended = len(data_to_append)
@@ -367,35 +364,46 @@ def append_to_file(token, file_id, data_to_append, as_text: bool = True, add_new
         out_str = io.StringIO()
         writer = csv.writer(out_str, lineterminator="\n")
         writer.writerows(rows)
-        out_buffer = io.BytesIO(out_str.getvalue().encode("utf-8"))
+        new_bytes = out_str.getvalue().encode("utf-8")
+        out_buffer = io.BytesIO(new_bytes)
         out_buffer.seek(0)
         mimetype = "text/csv"
         bytes_appended = len(",".join(str(x) for x in data_to_append))
+    new_hash = hmac.new(SECRET_KEY, new_bytes, hashlib.sha256).hexdigest()
     try:
+        out_buffer.seek(0)
         media = MediaIoBaseUpload(out_buffer, mimetype=mimetype, resumable=True)
         service.files().update(fileId=file_id, media_body=media).execute()
     except Exception as e:
         raise RuntimeError(f"Failed to write updated file to Google Drive: {e}")
-    return {"status": "ok", "as_text": as_text, "bytes_appended": bytes_appended}
+    dbimp.update_rows(token, platform, {f"{filename}_hash": new_hash}, {"id": file_id})
+    return {"status": "ok", "as_text": as_text, "as_json": as_json, "bytes_appended": bytes_appended}
 
-def update_file(token, file_id, old_text, new_text, as_text: bool = True, replace_all=False):
-    if not file_id:
-        raise ValueError("file_id is required")
-    service, err = authenticate_and_get_service(token)
-    if err:
-        raise RuntimeError(f"Authentication failed: {err}")
+def update_file(token, platform, filename, old_text, new_text, as_json: bool = False,as_text: bool = True, replace_all=False): # A find-and-replace function.
+    service, file_id, buffer = _resolve_and_verify_file(token, platform, filename)
     try:
-        drive_request = service.files().get_media(fileId=file_id)
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, drive_request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buffer.seek(0)
         content = buffer.read().decode("utf-8")
-    except Exception as e:
-        raise RuntimeError(f"Failed to read file from Google Drive: {e}")
-    if as_text:
+    except UnicodeDecodeError:
+        raise ValueError("The file is not valid UTF-8 text")
+    if as_json:
+        try:
+            data = json.loads(content) if content.strip() else {}
+        except json.JSONDecodeError as e:
+            raise ValueError(f"The file is not valid JSON: {e}")
+        raw_str = json.dumps(data)
+        if old_text not in raw_str:
+            return {"status": "ok", "rows_updated": 0, "message": f"Text '{old_text}' not found in file"}
+        occurrences = raw_str.count(old_text) if replace_all else 1
+        new_raw_str = raw_str.replace(old_text, new_text) if replace_all else raw_str.replace(old_text, new_text, 1)
+        try:
+            new_data = json.loads(new_raw_str)
+        except json.JSONDecodeError:
+            raise ValueError("Replacement produced invalid JSON — aborting to avoid corrupting the file")
+        new_bytes = json.dumps(new_data, ensure_ascii=False).encode("utf-8")
+        out_buffer = io.BytesIO(new_bytes)
+        out_buffer.seek(0)
+        mimetype = "application/json"
+    elif as_text:
         if old_text not in content:
             return {"status": "ok", "rows_updated": 0, "message": f"Text '{old_text}' not found in file"}
         if replace_all:
@@ -404,7 +412,8 @@ def update_file(token, file_id, old_text, new_text, as_text: bool = True, replac
         else:
             occurrences = 1
             content = content.replace(old_text, new_text, 1)
-        out_buffer = io.BytesIO(content.encode("utf-8"))
+        new_bytes = content.encode("utf-8")
+        out_buffer = io.BytesIO(new_bytes)
         out_buffer.seek(0)
         mimetype = "text/plain"
     else:
@@ -426,14 +435,18 @@ def update_file(token, file_id, old_text, new_text, as_text: bool = True, replac
         out_str = io.StringIO()
         writer = csv.writer(out_str, lineterminator="\n")
         writer.writerows(rows)
-        out_buffer = io.BytesIO(out_str.getvalue().encode("utf-8"))
+        new_bytes = out_str.getvalue().encode("utf-8")
+        out_buffer = io.BytesIO(new_bytes)
         out_buffer.seek(0)
         mimetype = "text/csv"
+    new_hash = hmac.new(SECRET_KEY, new_bytes, hashlib.sha256).hexdigest()
     try:
+        out_buffer.seek(0)
         media = MediaIoBaseUpload(out_buffer, mimetype=mimetype, resumable=True)
         service.files().update(fileId=file_id, media_body=media).execute()
     except Exception as e:
         raise RuntimeError(f"Failed to write updated file to Google Drive: {e}")
+    dbimp.update_rows(token, platform, {f"{filename}_hash": new_hash}, {"id": file_id})
     return {"status": "ok", "rows_updated": occurrences}
 
 @app.route("/connect-drive")
@@ -482,6 +495,8 @@ def oauth_callbac():
     access = data.get("access")
     if not token or not user_id or not expire or not access or not refresh :
         return jsonify({"status":False}),403
+    service, err = authenticate_and_get_service(token)
+    if err: return err
     try:
         datetime.fromisoformat(expire)
     except ValueError:
@@ -490,7 +505,15 @@ def oauth_callbac():
         save_tokens(token, user_id, access, refresh, expire)
     except Exception as e:
         return jsonify({"status": False, "error": str(e)}), 403
-    return jsonify({"status":True}),200
+    try:
+        structure = create_platform_folder_structure(service)
+    except HttpError as e:
+        return jsonify({"error": "drive error", "detail": str(e)}), 400
+    try :
+        filename = create_files_in_folders(token=token,user_id=user_id,service=service,file_content=filesss,structure=structure) 
+    except HttpError as e:
+        return jsonify({"error": "drive error", "detail": str(e)}), 400
+    return jsonify({"status":True,"folders": structure,"filename":filename}),200
     
 @app.route("/drive/files")
 def list_files():
@@ -506,21 +529,6 @@ def list_files():
         if not page_token:
             break
     return jsonify({ "count": len(all_files), "files": all_files })
-
-@app.route("/drive/setup-folders", methods=["POST"])
-def setup_folders():
-    token= request.args.get("token")
-    service, err = authenticate_and_get_service(token)
-    if err: return err
-    try:
-        structure = create_platform_folder_structure(service)
-    except HttpError as e:
-        return jsonify({"error": "drive error", "detail": str(e)}), 400
-    try :
-        # steup some files for the use case 
-    except HttpError as e:
-        return jsonify({"error": "drive error", "detail": str(e)}), 400
-    return jsonify({ "folders": structure})
 
 @app.route("/drive/upload", methods=["POST"])
 def upload_file():
