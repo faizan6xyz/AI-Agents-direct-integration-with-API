@@ -1,7 +1,7 @@
 import io
 import pandas as pd
 import os
-from flask import Flask, request, redirect, jsonify, send_file
+from flask import Flask, request, redirect, jsonify
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload , MediaIoBaseUpload ,MediaIoBaseDownload
 from googleapiclient.errors import HttpError
@@ -12,13 +12,18 @@ import csv
 from google.auth.transport.requests import Request as GoogleRequest
 from google.auth.exceptions import RefreshError, TransportError, GoogleAuthError
 from googleapiclient.discovery import build
+import json
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from cryptography.fernet import Fernet
 import requests
 import database.UserDB as dbimp
+from io import BytesIO
+import hashlib
+import hmac
 import authnew as au
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
+SECRET_KEY = os.environ.get("token_secret", "").encode("utf-8")
 CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
 CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]  
 REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
@@ -27,9 +32,39 @@ fernet = Fernet(os.environ["FERNET_KEY"].encode())
 serializer = URLSafeTimedSerializer(app.secret_key)
 STATE_MAX_AGE = 600  # seconds, state link expires after 10 min
 table_name = "Drive" 
-PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin","x"]
+APP_FOLDER = ["Leo_Social"]
+PLATFORM_FOLDERS = ["whatsapp", "instagram", "gmail", "linkedin"]
 BASE_URL = ""
-SUBFOLDERS = ["photos", "videos", "pdf", "documents", " " ]
+SUBFOLDERS = ["photos", "videos", "pdf", "documents", "Analytics" ]
+campaigns_content = "email,campaign_id,capaign_name,send_time,recieve_time,interest"
+campaigns_content1 = "phone_no,campaign_id,capaign_name,send_time,recieve_time,interest"
+campaigns_content2 = "media_id,views,likes,comments,saved,shares,total_interaction,profile_activity,time,follows,thumbnail"
+campaigns_content3 = "media_id,posted,caption,thumbnail,posted_time"
+campaigns_content4 = "media_id,views,likes,reach,replies,shares,navigation,follows,profile_activity,hour,story_is,thumbnail,time"
+campaigns_content5 = "media_id,publish_at,impression,likes,comments,shares,clicks,engagements,profile_views,follower_gained,saves,reaction,send"
+
+def hashmeta(text,filename):
+    x = hmac.new(SECRET_KEY,text.encode("utf-8"),hashlib.sha256).hexdigest()
+    return {filename: {"hashed": x}}
+
+instagram_metadata = {**hashmeta(campaigns_content2, "postanalysis.txt"),**hashmeta(campaigns_content3, "postIds.txt"),**hashmeta(campaigns_content4, "reachanalysis.txt"),}
+
+filesss = {"Gmail": {"campains.txt": campaigns_content,
+                    "metadata.json": json.dumps(hashmeta(campaigns_content,"campains.txt"), indent=2),
+                    "workflowmessage.json": "{}",},
+          "Whatsapp": {"campains.txt": campaigns_content1,
+                    "metadata.json": json.dumps(hashmeta(campaigns_content1,"campains.txt"), indent=2),
+                    "workflowmessage.json": "{}",},
+          "Instagram": {"workflowmessage.json": "{}",
+                    "workflowcomment.json": "{}",
+                    "postanalysis.txt": campaigns_content2,
+                    "postIds.txt": campaigns_content3,
+                    "reachanalysis.txt": campaigns_content4,
+                    "metadata.json": json.dumps(instagram_metadata, indent=2),},
+          "linkedln": {"workflowmessage.json": "{}",
+                    "workflowcomment.json": "{}",
+                    "postanalysis.txt": campaigns_content5,
+                    "metadata.json": json.dumps(hashmeta(campaigns_content5,"postanalysis.txt"), indent=2), },}
 
 def save_tokens(token, user_id, access_token, refresh_token, expiry):
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -122,13 +157,32 @@ def get_or_create_folder(service, folder_name, parent_id=None):
 
 def create_platform_folder_structure(service):
     structure = {}
-    for platform in PLATFORM_FOLDERS:
-        platform_id, platform_created = get_or_create_folder(service, platform)
-        structure[platform] = {"_id": platform_id, "_created": platform_created}
-        for sub in SUBFOLDERS:
-            sub_id, sub_created = get_or_create_folder(service, sub, parent_id=platform_id)
-            structure[platform][sub] = {"id": sub_id, "created": sub_created}
+    for applic in APP_FOLDER:
+        app_id, app_created = get_or_create_folder(service, applic)
+        structure[applic] = {"_id": app_id, "_created": app_created}
+        for platform in PLATFORM_FOLDERS:
+            platform_id, platform_created = get_or_create_folder(service, platform, parent_id=app_id)
+            structure[applic][platform] = {"_id": platform_id, "_created": platform_created}
+            for sub in SUBFOLDERS:
+                sub_id, sub_created = get_or_create_folder(service, sub, parent_id=platform_id)
+                structure[applic][platform][sub] = {"id": sub_id, "created": sub_created}
     return structure
+
+def create_files_in_folders(service, file_content, structure):
+    created_files = {}
+    for platform, files in file_content.items():
+        folder_id = structure[APP_FOLDER][platform]["analysis"]["id"]
+        created_files[platform] = {}
+        for filename, content in files.items():
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            mime_type = "application/json" if filename.endswith(".json") else "text/plain"
+            file_metadata = {"name": filename, "parents": [folder_id]}
+            media = MediaIoBaseUpload(BytesIO(content), mimetype=mime_type, resumable=True)
+            created = service.files().create(body=file_metadata,media_body=media,fields="id, name, parents").execute()
+            created_files[platform][filename] = created["id"]
+            print(f"[created] {APP_FOLDER}/{platform}/analysis/{filename} -> id={created['id']}")
+    return created_files
 
 def read_csv_from_drive(token, file_id, as_text: bool = False):
     if not file_id:
@@ -313,7 +367,6 @@ def append_to_file(token, file_id, data_to_append, as_text: bool = True, add_new
         out_str = io.StringIO()
         writer = csv.writer(out_str, lineterminator="\n")
         writer.writerows(rows)
-
         out_buffer = io.BytesIO(out_str.getvalue().encode("utf-8"))
         out_buffer.seek(0)
         mimetype = "text/csv"
@@ -439,7 +492,6 @@ def oauth_callbac():
         return jsonify({"status": False, "error": str(e)}), 403
     return jsonify({"status":True}),200
     
-
 @app.route("/drive/files")
 def list_files():
     token= request.args.get("token")
@@ -462,6 +514,10 @@ def setup_folders():
     if err: return err
     try:
         structure = create_platform_folder_structure(service)
+    except HttpError as e:
+        return jsonify({"error": "drive error", "detail": str(e)}), 400
+    try :
+        # steup some files for the use case 
     except HttpError as e:
         return jsonify({"error": "drive error", "detail": str(e)}), 400
     return jsonify({ "folders": structure})

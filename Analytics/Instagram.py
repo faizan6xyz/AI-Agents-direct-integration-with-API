@@ -1,6 +1,5 @@
 import pandas as pd
-# metrics = ("id","views","reach","likes","comments","saved","shares",
-#            "total_interactions","profile_activity","follows","time")
+# metrics = ("id","views","reach","likes","comments","saved","shares","total_interactions","profile_activity","follows","time","thumbnail")
 # long-term data, collected ~monthly, per post
 
 def coversion(df: pd.DataFrame):  # always first
@@ -86,20 +85,20 @@ def filtering(df: pd.DataFrame, ids: list[int] | None = None):  # 2nd step, afte
             df = df[df.index.astype(int).isin(ids)]
     return df
 
-# metrics = ("id","views","likes","reach","replies","shares","navigation",
-#            "profile_activity","hour","follows") — 24h short-term/story data.
+# metrics = ("id","views","likes","reach","replies","shares","navigation","profile_activity","hour","follows", "istory","time","thumbnail) — 24h short-term/story data.
 # most "comments" for a post live in "replies".
 
 def best_posting_hour(df: pd.DataFrame):
     if df is None or df.empty:
         return "empty analytics"
-    df = df.copy()
+    df = df[~df["istory"]] # for not sotry
     df["total_engagement"] = df[["likes", "replies", "shares"]].sum(axis=1)
     return df.groupby("hour")["total_engagement"].mean().sort_values(ascending=False)
 
 def coversion_stories(df: pd.DataFrame):
     if df is None or df.empty:
         return "empty analytics"
+    df = df[df["istory"]] # for is sotry 
     df = df.groupby("id").mean(numeric_only=True)
     df["comment_rate"] = df["replies"] / df["views"]
     df["like_rate"] = df["likes"] / df["views"]
