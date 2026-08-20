@@ -43,7 +43,6 @@ campaigns_content3 = "media_id,posted,caption,thumbnail,posted_time"
 campaigns_content4 = "media_id,views,likes,reach,replies,shares,navigation,follows,profile_activity,hour,story_is,thumbnail,time"
 campaigns_content5 = "media_id,publish_at,impression,likes,comments,shares,clicks,engagements,profile_views,follower_gained,saves,reaction,send"
 
-
 filesss = {"Gmail": {"campains.txt": campaigns_content, "workflowmessage.json": "{}",},
           "Whatsapp": {"campains.txt": campaigns_content1,"workflowmessage.json": "{}",},
           "Instagram": {"workflowmessage.json": "{}","workflowcomment.json": "{}","postanalysis.txt": campaigns_content2,"postIds.txt": campaigns_content3,"reachanalysis.txt": campaigns_content4},

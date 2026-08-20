@@ -4,11 +4,11 @@ import requests
 from urllib.parse import urlencode
 from flask import Flask, request, redirect, jsonify
 from supabase import create_client, Client
-import Drive.dep as dpp
 from datetime import datetime, timezone, timedelta
 import time
 import authnew as au
 import Instagram.upload as uploadd
+import Instagram.schedule_video as scccc
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -215,6 +215,7 @@ def story(account_id):
     duration = data.get("duration")
     timee = data.get("time") or {}
     token = data.get("token")
+    tokench = au.process(token)
     if not media_url or not media_size or not token:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -241,6 +242,7 @@ def story(account_id):
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post story: {e}"}), 500
     if id_post:
+        uploadd.scccc(user_id=tokench["user_id"],access_token=access_token,media_id=id_post,token=tokench["token"],typee="story")
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post story."}), 500
@@ -256,6 +258,8 @@ def photo(account_id):
     publish = data.get("publish")
     caption = data.get("caption", "")
     timee = data.get("time") or {}
+    token = data.get("token")
+    tokench = au.process(token)
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -279,6 +283,8 @@ def photo(account_id):
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post photo: {e}"}), 500
     if id_post:
+        uploadd.scccc(user_id=tokench["user_id"],access_token=access_token,media_id=id_post,token=tokench["token"],typee="photo")
+        uploadd.xcccc(user_id=tokench["user_id"],access_token=access_token,media_id=id_post,token=tokench["token"],typee="photo1")
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post photo."}), 500
@@ -298,6 +304,8 @@ def video(account_id):
     width = data.get("width")
     duration = data.get("duration")
     timee = data.get("time") or {}
+    token = data.get("token")
+    tokench = au.process(token)
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -330,6 +338,8 @@ def video(account_id):
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post video: {e}"}), 500
     if id_post:
+        uploadd.scccc(user_id=tokench["user_id"],access_token=access_token,media_id=id_post,token=tokench["token"],typee="video")
+        uploadd.xcccc(user_id=tokench["user_id"],access_token=access_token,media_id=id_post,token=tokench["token"],typee="video1")
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post video."}), 500
@@ -346,6 +356,8 @@ def carousel(account_id):
     media_urls = data.get("media_urls", [])
     is_video = data.get("is_video", [])
     timee = data.get("time") or {}
+    token = data.get("token")
+    tokench = au.process(token)
     if not media_urls or not is_video or not media_size or not media_duration:
         return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration are all required"}), 400
     if not (len(media_urls) == len(is_video) == len(media_size) == len(media_duration)):
@@ -371,6 +383,8 @@ def carousel(account_id):
     except Exception as e:
         return jsonify({"success": False, "message": f"Unable to post carousel: {e}"}), 500
     if id_post:
+        uploadd.scccc(user_id=tokench["user_id"],access_token=access_token,media_id=id_post,token=tokench["token"],typee="carousel")
+        uploadd.xcccc(user_id=tokench["user_id"],access_token=access_token,media_id=id_post,token=tokench["token"],typee="carousel1")
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post carousel."}), 500
