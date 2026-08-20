@@ -276,7 +276,6 @@ def mark_as_unread(message_id):
 def download_attachments(message_id):
     token = request.args.get("token")
     user_id ,token  = get_valid_user_id(token)
-
     if not user_id:
         return jsonify({"error": "valid 'user_id' is required"}), 400
     if not token :

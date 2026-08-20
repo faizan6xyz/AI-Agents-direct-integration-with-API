@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict, deque
 import requests
 from flask import request, jsonify
+import Drive.dep as  dpp
 import database.UserDB as dbimp
 from supabase import create_client, Client
 
@@ -165,92 +166,6 @@ def send_whatsapp_media(PHONE_NUMBER_ID, ACCESS_TOKEN, recipient_number: str, ms
     payload = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": recipient_number, "type": msg_type, msg_type: media_obj, }
     url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
     resp = request_with_retry( "POST", url, headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}, json=payload,)
-    return resp.json()
-
-def send_whatsapp_location(PHONE_NUMBER_ID, ACCESS_TOKEN, recipient_number: str, latitude: float,longitude: float, name: str = None, address: str = None) -> dict:
-    recipient_number = validate_phone_number(recipient_number)
-    try:
-        lat = float(latitude)
-        lng = float(longitude)
-    except (TypeError, ValueError):
-        raise ValueError("latitude/longitude must be numbers.")
-    if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
-        raise ValueError("latitude must be in [-90, 90] and longitude in [-180, 180].")
-    location_obj = {"latitude": lat, "longitude": lng}
-    if name:
-        location_obj["name"] = sanitize_field(name)[:1000]
-    if address:
-        location_obj["address"] = sanitize_field(address)[:1000]
-    payload = {"messaging_product": "whatsapp","recipient_type": "individual","to": recipient_number,"type": "location","location": location_obj,}
-    url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
-    resp = request_with_retry("POST", url,headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},json=payload,)
-    return resp.json()
-
-def send_whatsapp_reply_buttons(PHONE_NUMBER_ID, ACCESS_TOKEN, recipient_number: str,body_text: str, buttons: list) -> dict:
-    recipient_number = validate_phone_number(recipient_number)
-    body_text = validate_text_body(body_text)
-    if not buttons or len(buttons) > MAX_BUTTONS:
-        raise ValueError(f"Provide 1-{MAX_BUTTONS} buttons, got {len(buttons) if buttons else 0}.")
-    formatted_buttons = []
-    seen_ids = set()
-    for b in buttons:
-        btn_id = str(b.get("id", "")).strip()
-        title = str(b.get("title", "")).strip()
-        if not btn_id or not title:
-            raise ValueError("Each button needs a non-empty 'id' and 'title'.")
-        if len(btn_id) > MAX_BUTTON_ID_LEN:
-            raise ValueError(f"Button id exceeds {MAX_BUTTON_ID_LEN} chars.")
-        if len(title) > MAX_BUTTON_TITLE_LEN:
-            raise ValueError(f"Button title '{title}' exceeds WhatsApp's {MAX_BUTTON_TITLE_LEN}-char limit.")
-        if btn_id in seen_ids:
-            raise ValueError(f"Duplicate button id '{btn_id}'.")
-        seen_ids.add(btn_id)
-        formatted_buttons.append({"type": "reply", "reply": {"id": btn_id, "title": title}})
-    payload = {"messaging_product": "whatsapp","recipient_type": "individual","to": recipient_number,"type": "interactive","interactive": {"type": "button","body": {"text": body_text},"action": {"buttons": formatted_buttons},},}
-    url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
-    resp = request_with_retry("POST", url,headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},json=payload,)
-    return resp.json()
-
-def send_whatsapp_list(PHONE_NUMBER_ID, ACCESS_TOKEN, recipient_number: str, body_text: str,button_text: str, sections: list) -> dict:
-    recipient_number = validate_phone_number(recipient_number)
-    body_text = validate_text_body(body_text)
-    if not button_text or len(button_text) > MAX_LIST_BUTTON_TEXT_LEN:
-        raise ValueError(f"'button_text' must be 1-{MAX_LIST_BUTTON_TEXT_LEN} chars.")
-    if not sections or len(sections) > MAX_LIST_SECTIONS:
-        raise ValueError(f"Provide 1-{MAX_LIST_SECTIONS} sections.")
-    total_rows = 0
-    formatted_sections = []
-    seen_row_ids = set()
-    for section in sections:
-        title = str(section.get("title", "")).strip()
-        rows = section.get("rows", [])
-        if not rows:
-            raise ValueError(f"Section '{title}' has no rows.")
-        formatted_rows = []
-        for row in rows:
-            row_id = str(row.get("id", "")).strip()
-            row_title = str(row.get("title", "")).strip()
-            row_desc = str(row.get("description", "")).strip()
-            if not row_id or not row_title:
-                raise ValueError("Each row needs a non-empty 'id' and 'title'.")
-            if len(row_title) > MAX_LIST_ROW_TITLE_LEN:
-                raise ValueError(f"Row title '{row_title}' exceeds {MAX_LIST_ROW_TITLE_LEN}-char limit.")
-            if len(row_desc) > MAX_LIST_ROW_DESC_LEN:
-                raise ValueError(f"Row description exceeds {MAX_LIST_ROW_DESC_LEN}-char limit.")
-            if row_id in seen_row_ids:
-                raise ValueError(f"Duplicate row id '{row_id}'.")
-            seen_row_ids.add(row_id)
-            row_obj = {"id": row_id, "title": row_title}
-            if row_desc:
-                row_obj["description"] = row_desc
-            formatted_rows.append(row_obj)
-            total_rows += 1
-        if total_rows > MAX_LIST_ROWS_TOTAL:
-            raise ValueError(f"Total rows across all sections exceeds {MAX_LIST_ROWS_TOTAL}.")
-        formatted_sections.append({"title": title, "rows": formatted_rows})
-    payload = {"messaging_product": "whatsapp", "recipient_type": "individual", "to": recipient_number, "type": "interactive", "interactive": { "type": "list", "body": {"text": body_text},"action": {"button": button_text, "sections": formatted_sections}, },}
-    url = f"{GRAPH_URL}/{PHONE_NUMBER_ID}/messages"
-    resp = request_with_retry("POST", url, headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"},json=payload, )
     return resp.json()
 
 def get_user_for_phone_number_id(incoming_id: str):

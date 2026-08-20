@@ -515,7 +515,6 @@ def oauth_callbac():
         return jsonify({"error": "drive error", "detail": str(e)}), 400
     return jsonify({"status":True,"folders": structure,"filename":filename}),200
     
-@app.route("/drive/files")
 def list_files():
     token= request.args.get("token")
     service, err = authenticate_and_get_service(token)
@@ -530,7 +529,6 @@ def list_files():
             break
     return jsonify({ "count": len(all_files), "files": all_files })
 
-@app.route("/drive/upload", methods=["POST"])
 def upload_file():
     token= request.args.get("token")
     service, err = authenticate_and_get_service(token)
@@ -568,7 +566,6 @@ def upload_file():
         os.remove(tmp_path)
     return jsonify({"file_id": file_id, "name": created_file.get("name"),"mime_type": created_file.get("mimeType"), "url": created_file.get("webViewLink"),"download_url": created_file.get("webContentLink"),  "public": make_public,})   # download url is the media url to pass
 
-@app.route("/drive/delete", methods=["DELETE"])
 def delete_file():
     token= request.args.get("token")
     service, err = authenticate_and_get_service(token)
@@ -585,7 +582,6 @@ def delete_file():
         return jsonify({"error": "drive error", "details": str(e)}), status
     return jsonify({ "file_id": file_id, "status": "deleted"})
 
-@app.route("/drive/anal/<file_id>")
 def read_csv_from_drive(file_id):
     token= request.args.get("token")
     if not file_id :
@@ -611,7 +607,6 @@ def read_csv_from_drive(file_id):
         return jsonify({"error": "The file is not a valid CSV" }), 400
     return jsonify({"CSV": df.to_dict(orient="records")}), 200  
 
-@app.route("/drive/append/<file_id>", methods=["POST"])
 def append_csv_to_drive(file_id):
     token = request.args.get("token")
     if not file_id:
@@ -659,7 +654,6 @@ def append_csv_to_drive(file_id):
         return jsonify({"error": "Failed to write updated CSV to Google Drive", "details": str(e)}), 500
     return jsonify({"status": "ok","rows_added": len(new_df),"total_rows": len(combined_df)}), 200
 
-@app.route("/drive/metadata")
 def get_drive_file_metadata():
     token= request.args.get("token")
     service, err = authenticate_and_get_service(token)

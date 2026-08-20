@@ -4,6 +4,7 @@ import requests
 from urllib.parse import urlencode
 from flask import Flask, request, redirect, jsonify
 from supabase import create_client, Client
+import Drive.dep as dpp
 from datetime import datetime, timezone, timedelta
 import time
 import authnew as au
@@ -213,7 +214,8 @@ def story(account_id):
     publish = data.get("publish")
     duration = data.get("duration")
     timee = data.get("time") or {}
-    if not media_url or not media_size:
+    token = data.get("token")
+    if not media_url or not media_size or not token:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
     duration = _coerce_int( duration)
@@ -242,6 +244,7 @@ def story(account_id):
         return jsonify({"success": True, "media_id": id_post}), 200
     else:
         return jsonify({"success": False, "message": "Unable to post story."}), 500
+    # add a scheduler for the futrue data fetching every hour or data in post
 
 @app.route("/instagram/upload/<account_id>/photo", methods=["POST"])
 def photo(account_id):

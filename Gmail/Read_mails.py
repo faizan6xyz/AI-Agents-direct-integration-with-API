@@ -230,32 +230,30 @@ def send_message(service, to, subject, body_text, name=""):
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     return _with_retry(service.users().messages().send, userId='me', body={'raw': raw})
 
-def send_message_with_attachments(service, to, subject, body_text, file_paths,name ="" ,allowed_dir=None):
+def send_message_with_attachments(service, to, subject, body_text, drive_links, name="", link_labels=None):
     if name:
-            subject = subject.replace("{name}", name)
-            body_text = body_text.replace("{name}", name)
+        subject = subject.replace("{name}", name)
+        body_text = body_text.replace("{name}", name)
     _validate_email_address(to)
     _validate_header_value(subject, "subject")
     _validate_header_value(body_text, "body_text")
-    if not file_paths:
-        raise ValueError("file_paths must contain at least one attachment.")
-    resolved_paths = [_validate_attachment(p, base_dir=allowed_dir) for p in file_paths]
-    total_size = sum(os.path.getsize(p) for p in resolved_paths)
-    if total_size > MAX_TOTAL_SEND_BYTES:
-        raise ValueError(f"Combined attachment size ({total_size / (1024*1024):.1f} MB) exceeds Gmail's "
-            f"{MAX_TOTAL_SEND_BYTES / (1024*1024):.0f} MB limit.")
+    if not drive_links:
+        raise ValueError("drive_links must contain at least one link.")
+    if not isinstance(drive_links, list):
+        drive_links = [drive_links]
+    validated_links = []
+    for link in drive_links:
+        if not isinstance(link, str) or not link.startswith("https://drive.google.com/"):
+            raise ValueError(f"Invalid Drive link: {link!r}")
+        validated_links.append(link)
+    if link_labels and len(link_labels) != len(validated_links):
+        raise ValueError("link_labels must match drive_links in length.")
+    links_section = "\n".join( f"- {link_labels[i]}: {link}" if link_labels else f"- {link}" for i, link in enumerate(validated_links) )
+    full_body = f"{body_text}\n\nAttachments:\n{links_section}"
     message = MIMEMultipart()
     message['to'] = to
     message['subject'] = subject or ""
-    message.attach(MIMEText(body_text or ""))
-    for path in resolved_paths:
-        content_type, _ = mimetypes.guess_type(path)
-        maintype, subtype = (content_type.split('/', 1) if content_type else ('application', 'octet-stream'))
-        with open(path, 'rb') as f:
-            data = f.read()
-        part = MIMEApplication(data, _subtype=subtype, Name=os.path.basename(path))
-        part['Content-Disposition'] = f'attachment; filename="{os.path.basename(path)}"'
-        message.attach(part)
+    message.attach(MIMEText(full_body))
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     if len(raw) > MAX_ATTACHMENT_BYTES * 2:
         raise ValueError("Encoded message size exceeds safe transmission limits.")
