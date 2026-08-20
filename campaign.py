@@ -13,6 +13,7 @@ app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gmail_api")
+MAX_MEDIA_ITEMS = 4
 
 @app.route('/campaign', methods=['POST'])
 # @limiter.limit("5 per minute")
@@ -28,6 +29,14 @@ def campaign():
     target = data.get("target")
     body = data.get("body")
     names = data.get("name")
+    media = data.get("media") or []
+    if not isinstance(media, list):
+        return jsonify({"error": "'media' must be a list"}), 400
+    if len(media) > MAX_MEDIA_ITEMS:
+        return jsonify({"error": f"too many media files to send (max {MAX_MEDIA_ITEMS})"}), 400
+    for m in media:
+        if not isinstance(m, dict) or not m.get("link"):
+            return jsonify({"error": "each media item must be an object with a 'link'"}), 400
     if not token:
         return jsonify({"error": "'token' is required"}), 400
     if not isinstance(platform, str) or platform.strip().lower() not in ("gmail", "whatsapp"):
@@ -49,6 +58,9 @@ def campaign():
         invalid = [t for t in target if not isinstance(t, str) or not WA_ID_RE.match(t)]
         if invalid:
             return jsonify({"error": "invalid entries in 'target'", "invalid": invalid[:10]}), 400
+        for m in media:
+            if m.get("type") not in what.VALID_MEDIA_TYPES:
+                return jsonify({"error": f"media 'type' must be one of {sorted(what.VALID_MEDIA_TYPES)}"}), 400
     elif platform == "gmail":
         EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
         invalid = [t for t in target if not isinstance(t, str) or not EMAIL_RE.match(t)]
@@ -72,13 +84,19 @@ def campaign():
             return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
         if not service:
             return jsonify({"error": "not connected", "connect_url": "/connect-gmail"}), 401
+        drive_links = [m["link"] for m in media] if media else None
+        link_labels = [m.get("filename") for m in media] if media else None
+        if link_labels and any(l is None for l in link_labels):
+            link_labels = None  # only use labels if every item has one
         for recipient, recipient_name in zip(target, names):
             now = datetime.now(timezone.utc).isoformat()
-            # email,campaign_id,campaign_name,send_time,receive_time,interest
             content = f"{recipient},{campaign_id},{campaign_name},{now},,"
             try:
+                if media:
+                    gc.send_message_with_attachments(service=service, to=recipient, subject=campaign_name or "", body_text=body, drive_links=drive_links,link_labels=link_labels, name=recipient_name,)
+                else:
+                    gc.send_message(service=service, to=recipient, subject=campaign_name or "", body_text=body, name=recipient_name)
                 dpp.append_to_file(token=token, platform=platform, filename="campaigns.txt", data_to_append=content)
-                gc.send_message(service=service, to=recipient, subject=campaign_name or "", body_text=body, name=recipient_name)
                 results.append({"to": recipient, "status": "sent"})
             except Exception as e:
                 logger.exception("campaign send failed for %s", recipient)
@@ -96,17 +114,21 @@ def campaign():
         except (TypeError, ValueError):
             return jsonify({"error": "invalid stored token expiry"}), 500
         if token_expiry - datetime.now(timezone.utc) < timedelta(days=2):
-            refreshed = what.refresh_token(tokench["token"], user_id, acc)
+            refreshed = what.refresh_token(token, user_id, acc)
             if not refreshed:
                 return jsonify({"error": "token refresh failed, please reconnect WhatsApp"}), 502
-            acc = refreshed  # use the refreshed token going forward
+            acc = refreshed
         for recipient, recipient_name in zip(target, names):
             now = datetime.now(timezone.utc).isoformat()
-            # phone_no,campaign_id,campaign_name,send_time,receive_time,interest
             content = f"{recipient},{campaign_id},{campaign_name},{now},,"
             try:
+                personalized_body = body.replace("{name}", recipient_name) if recipient_name else body
+                what.send_whatsapp_message(PHONE_NUMBER_ID=account_id, ACCESS_TOKEN=acc, recipient_number=recipient, message_body=personalized_body)
+                for m in media:
+                    what.send_whatsapp_media(
+                        PHONE_NUMBER_ID=account_id, ACCESS_TOKEN=acc, recipient_number=recipient,
+                        msg_type=m["type"], link=m["link"],caption=m.get("caption"), filename=m.get("filename"),  )
                 dpp.append_to_file(token=token, platform=platform, filename="campaigns.txt", data_to_append=content)
-                what.send_whatsapp_message(PHONE_NUMBER_ID=account_id, ACCESS_TOKEN=acc, recipient_number=recipient, message_body=body)
                 results.append({"to": recipient, "status": "sent"})
             except Exception as e:
                 logger.exception("campaign send failed for %s", recipient)
