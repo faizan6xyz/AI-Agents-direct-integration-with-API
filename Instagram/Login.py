@@ -186,8 +186,10 @@ def get_instagram_posts(account_id):
         params = None
     return jsonify({"count": len(posts), "posts": posts})
 
-@app.route("/instagram/comments/<account_id>/<media_id>")
-def get_instagram_comments(account_id, media_id):
+@app.route("/instagram/comments/")
+def get_instagram_comments():
+    account_id = request.args.get("account_id")
+    media_id = request.args.get("media_id")
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     fields = "id,text,username,timestamp,like_count"
@@ -203,11 +205,10 @@ def get_instagram_comments(account_id, media_id):
         params = None
     return jsonify({"count": len(comments), "comments": comments})
 
-@app.route("/instagram/upload/<account_id>/story", methods=["POST"])
-def story(account_id):
-    access_token, err = get_authenticated_access_token(account_id)
-    if err: return err
+@app.route("/instagram/upload/story", methods=["POST"])
+def story():
     data = request.get_json(silent=True) or {}
+    account_id = data.get("account_id")
     media_url = data.get("media_url")
     is_video = data.get("is_video")
     media_size = data.get("media_size")
@@ -216,6 +217,8 @@ def story(account_id):
     timee = data.get("time") or {}
     token = data.get("token")
     tokench = au.process(token)
+    access_token, err = get_authenticated_access_token(account_id)
+    if err: return err
     if not media_url or not media_size or not token:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -248,11 +251,10 @@ def story(account_id):
         return jsonify({"success": False, "message": "Unable to post story."}), 500
     # add a scheduler for the futrue data fetching every hour or data in post
 
-@app.route("/instagram/upload/<account_id>/photo", methods=["POST"])
+@app.route("/instagram/upload/photo", methods=["POST"])
 def photo(account_id):
-    access_token, err = get_authenticated_access_token(account_id)
-    if err: return err
     data = request.get_json(silent=True) or {}
+    account_id = data.get("account_id")
     media_url = data.get("media_url")
     media_size = data.get("media_size")
     publish = data.get("publish")
@@ -260,6 +262,8 @@ def photo(account_id):
     timee = data.get("time") or {}
     token = data.get("token")
     tokench = au.process(token)
+    access_token, err = get_authenticated_access_token(account_id)
+    if err: return err
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -289,12 +293,11 @@ def photo(account_id):
     else:
         return jsonify({"success": False, "message": "Unable to post photo."}), 500
 
-@app.route("/instagram/upload/<account_id>/video", methods=["POST"])
-def video(account_id):
-    access_token, err = get_authenticated_access_token(account_id)
-    if err: return err
+@app.route("/instagram/upload/video", methods=["POST"])
+def video():
     data = request.get_json(silent=True) or {}
     media_url = data.get("media_url")
+    account_id = data.get("account_id")
     cover_url = data.get("cover_url")  # optional now, only valid for reels
     media_size = data.get("media_size")
     publish = data.get("publish")
@@ -306,6 +309,8 @@ def video(account_id):
     timee = data.get("time") or {}
     token = data.get("token")
     tokench = au.process(token)
+    access_token, err = get_authenticated_access_token(account_id)
+    if err: return err
     if not media_url or not media_size:
         return jsonify({"error": "url and media size is required"}), 400
     media_size = _coerce_int( media_size)
@@ -344,12 +349,11 @@ def video(account_id):
     else:
         return jsonify({"success": False, "message": "Unable to post video."}), 500
  
-@app.route("/instagram/upload/<account_id>/carousel", methods=["POST"])
-def carousel(account_id):
-    access_token, err = get_authenticated_access_token(account_id)
-    if err: return err
+@app.route("/instagram/upload/carousel", methods=["POST"])
+def carousel():
     data = request.get_json(silent=True) or {}
     publish = data.get("publish")
+    account_id = data.get("account_id")
     caption = data.get("caption", "")
     media_size = data.get("media_size", [])
     media_duration = data.get("media_duration", [])
@@ -358,6 +362,8 @@ def carousel(account_id):
     timee = data.get("time") or {}
     token = data.get("token")
     tokench = au.process(token)
+    access_token, err = get_authenticated_access_token(account_id)
+    if err: return err
     if not media_urls or not is_video or not media_size or not media_duration:
         return jsonify({"success": False, "message": "media_urls, is_video, media_size, and media_duration are all required"}), 400
     if not (len(media_urls) == len(is_video) == len(media_size) == len(media_duration)):
@@ -389,12 +395,12 @@ def carousel(account_id):
     else:
         return jsonify({"success": False, "message": "Unable to post carousel."}), 500
 
-@app.route("/instagram/<account_id>/auto", methods=["POST"])
-def get_thumbnail_auto(account_id):
-    access_token, err = get_authenticated_access_token(account_id)
-    if err:
-        return err
+@app.route("/instagram/auto", methods=["POST"])
+def get_thumbnail_auto():
+    account_id = request.args.get("account_id")
     media_id = request.args.get("media_id")
+    access_token, err = get_authenticated_access_token(account_id)
+    if err: return err
     if not media_id :
         return jsonify({"success": False, "message": "media_id and are required"}), 400
     try:
@@ -406,12 +412,13 @@ def get_thumbnail_auto(account_id):
     else:
         return jsonify({"success": False, "message": results["error"]}), 500
     
-@app.route("/instagram/insight/<account_id>/<media_id>", methods=["POST"])
-def insight(account_id, media_id):
-    access_token, err = get_authenticated_access_token(account_id)
-    if err:
-        return err
+@app.route("/instagram/insight", methods=["POST"])
+def insight():
     is_story = request.args.get("is_story")
+    media_id = request.args.get("media_id")
+    account_id = request.args.get("account_id")
+    access_token, err = get_authenticated_access_token(account_id)
+    if err: return err
     is_story = str(is_story).strip().lower() == "true" if is_story else False
     try:
         result = uploadd.get_media_insights(access_token=access_token, media_id=media_id , story = is_story)
@@ -422,12 +429,13 @@ def insight(account_id, media_id):
     else:
         return jsonify({"success": False, "message": result["error"]}), 500
     
-@app.route("/instagram/comments/reply/batch/<account_id>", methods=["POST"])
-def reply_to_comments_batch(account_id):
-    access_token, err = get_authenticated_access_token(account_id)
-    if err: return err
+@app.route("/instagram/comments/reply/batch/", methods=["POST"])
+def reply_to_comments_batch():
     data = request.get_json(silent=True) or {}
     replies = data.get("replies")  # expects [{"comment_id": "...", "message": "..."}, ...]
+    account_id = data.get("account_id")
+    access_token, err = get_authenticated_access_token(account_id)
+    if err: return err
     if not replies or not isinstance(replies, list):
         return jsonify({"success": False, "message": "expected a non-empty 'replies' list"}), 400
     results = []
@@ -446,13 +454,14 @@ def reply_to_comments_batch(account_id):
     overall_success = all(r["success"] for r in results)
     return jsonify({"success": overall_success, "results": results}), 200
 
-@app.route("/instagram/send-message/<account_id>", methods=["POST"])
-def send_instagram_message(account_id):
+@app.route("/instagram/send-message/", methods=["POST"])
+def send_instagram_message():
+    data = request.get_json(silent=True) or {}
+    recipient_id = data.get("recipient_id")
+    account_id = data.get("account_id")
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
-    body = request.get_json(silent=True) or {}
-    recipient_id = body.get("recipient_id")
-    message = body.get("message")
+    message = data.get("message")
     if not recipient_id or not message:
         return jsonify({"error": "recipient_id and message are required"}), 400
     result = uploadd.send_message(recipient_id, message, access_token)
@@ -460,8 +469,9 @@ def send_instagram_message(account_id):
         return jsonify(result), 400
     return jsonify(result), 200
 
-@app.route("/instagram/followers/<account_id>")
-def get_followers_count_route(account_id):
+@app.route("/instagram/followers")
+def get_followers_count_route():
+    account_id = request.args.get("account_id")
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     result = uploadd.get_follower_count(account_id, access_token)

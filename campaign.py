@@ -1,7 +1,8 @@
 import re
 import database.UserDB as dbimp
 import authnew as au
-import Instagram.Login as inn
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import Drive.dep as dpp
 import Whatsapp.login as what
 import Gmail.Read_mails as gc
@@ -14,10 +15,10 @@ app.secret_key = os.environ["FLASK_SECRET_KEY"]
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gmail_api")
 MAX_MEDIA_ITEMS = 4
+limiter = Limiter(get_remote_address, app=app, default_limits=["60 per minute"])
 
 @app.route('/campaign', methods=['POST'])
-# @limiter.limit("5 per minute")
-# @require_api_key
+@limiter.limit("5 per minute")
 def campaign():
     data = request.get_json(silent=True) or {}
     if not data:
@@ -125,9 +126,7 @@ def campaign():
                 personalized_body = body.replace("{name}", recipient_name) if recipient_name else body
                 what.send_whatsapp_message(PHONE_NUMBER_ID=account_id, ACCESS_TOKEN=acc, recipient_number=recipient, message_body=personalized_body)
                 for m in media:
-                    what.send_whatsapp_media(
-                        PHONE_NUMBER_ID=account_id, ACCESS_TOKEN=acc, recipient_number=recipient,
-                        msg_type=m["type"], link=m["link"],caption=m.get("caption"), filename=m.get("filename"),  )
+                    what.send_whatsapp_media( PHONE_NUMBER_ID=account_id, ACCESS_TOKEN=acc, recipient_number=recipient,msg_type=m["type"], link=m["link"],caption=m.get("caption"), filename=m.get("filename"),  )
                 dpp.append_to_file(token=token, platform=platform, filename="campaigns.txt", data_to_append=content)
                 results.append({"to": recipient, "status": "sent"})
             except Exception as e:

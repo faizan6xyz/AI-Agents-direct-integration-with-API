@@ -358,7 +358,7 @@ def get_follower_count(account_id, access_token):
     return {"success": True, "data": {"followers_count": followers_count}, "error": None}
 
 def story_schedule(hour,media_id,access_token):
-    one_hour_before = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    one_hour_before = (datetime.now(timezone.utc)).isoformat()
     meta_resp = requests.get(f"https://graph.instagram.com/{media_id}", params={ "fields": "id,media_type,media_product_type,thumbnail_url,timestamp,permalink", "access_token": access_token,},timeout=10,).json()
     insights_resp = requests.get(f"https://graph.instagram.com/{media_id}/insights",params={"metric": "views,reach,replies,shares,follows","access_token": access_token,},timeout=10,).json()
     nav_resp = requests.get(f"https://graph.instagram.com/{media_id}/insights",params={"metric": "navigation","breakdown": "story_navigation_action_type","access_token": access_token,},timeout=10,).json()
@@ -379,7 +379,7 @@ def get_media_analytics(media_id,access_token):
     return f"{media_id},{flat_metrics.get("views")},{flat_metrics.get("likes")},{flat_metrics.get("comments")},{flat_metrics.get("saved")},{flat_metrics.get("shares")},{flat_metrics.get("total_interactions")},{profile_resp.get("data", [{}])[0].get("total_value", {}).get("breakdowns", [])},{one_hour_before},{flat_metrics.get("follows")},{meta_resp.get("thumbnail_url")}"
 
 def get_post_analytics(hour,media_id,access_token):
-    one_hour_before = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    one_hour_before = (datetime.now(timezone.utc) ).isoformat()
     meta_resp = requests.get(f"https://graph.instagram.com/{media_id}",params={"fields": "id,media_type,media_product_type,thumbnail_url,media_url,timestamp,permalink","access_token": access_token,},timeout=10,).json()
     media_type = meta_resp.get("media_type")
     product_type = meta_resp.get("media_product_type")
