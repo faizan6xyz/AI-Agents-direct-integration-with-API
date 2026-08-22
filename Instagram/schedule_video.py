@@ -49,6 +49,12 @@ def get_containers_due(now):
     conn.close()
     return rows
 
+def update_container_schedule(container_id, sctime):
+    conn = get_conn()
+    conn.execute("UPDATE schedule SET time = ? WHERE container_id = ?", (sctime, container_id))
+    conn.commit()
+    conn.close()
+
 def delete_by_id(row_id):
     conn = get_conn()
     conn.execute("DELETE FROM schedule WHERE id = ?", (row_id,))
@@ -88,12 +94,15 @@ if __name__ == "__main__":
                 content = aaaa.get_post_analytics(hourss,media_id,access_tok)
                 dpp.append_to_file(token=token, platform="Instagram", filename="reachanalysis.txt", data_to_append=content)
                 delete_by_id(row_id)
-            if typess == "carousel1":
+            if typess == "carousel":
                 content = aaaa.get_post_analytics(hourss,media_id,access_tok)
                 dpp.append_to_file(token=token, platform="Instagram", filename="reachanalysis.txt", data_to_append=content)
                 delete_by_id(row_id)
-            if typess == "video1":
+            if typess == "video":
                 content = aaaa.get_post_analytics(hourss,media_id,access_tok)
                 dpp.append_to_file(token=token, platform="Instagram", filename="reachanalysis.txt", data_to_append=content)
                 delete_by_id(row_id)
         time.sleep(1)
+
+
+# add repeat of addition of scheledule of post1 type when every it deletes

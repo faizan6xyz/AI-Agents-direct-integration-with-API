@@ -397,9 +397,10 @@ def get_post_analytics(hour,media_id,access_token):
 
 def scccc(user_id,access_token,media_id,token,typee):
     for i in range(22):
-        time = (datetime.now(timezone.utc) + timedelta(hours=i+1)).isoformat()
-        sccc.insert__story(user_id, time, access_token,media_id,i,token,typee)
+        timesss = (datetime.now(timezone.utc) + timedelta(hours=i+1)).isoformat()
+        sccc.insert__story(user_id, timesss, access_token,media_id,i,token,typee)
 
 def xcccc(user_id,access_token,media_id,token,typee):
-    time = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-    sccc.insert__story1(user_id, time, access_token,media_id,token,typee)
+    for i in range(10): 
+        timesss = (datetime.now(timezone.utc) + timedelta(days=(7+i*7))).isoformat()
+        sccc.insert__story1(user_id, timesss, access_token,media_id,token,typee)

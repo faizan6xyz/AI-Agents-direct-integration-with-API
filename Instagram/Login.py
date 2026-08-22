@@ -169,8 +169,9 @@ def dataget():
         return jsonify({"error": "token stored failed to save", "details": str(e)}), 500
     return jsonify({"status": "ok"}), 200
 
-@app.route("/instagram/posts/<account_id>")
-def get_instagram_posts(account_id):
+@app.route("/instagram/posts/")
+def get_instagram_posts():
+    account_id = request.args.get("account_id")
     access_token, err = get_authenticated_access_token(account_id)
     if err: return err
     fields = "id,caption,media_type,media_url,permalink,timestamp,like_count,comments_count"
@@ -184,6 +185,16 @@ def get_instagram_posts(account_id):
         posts.extend(resp.get("data", []))
         url = resp.get("paging", {}).get("next")
         params = None
+    for post in posts:
+        try:
+            thumb_result = uploadd.get_media_thumbnail(access_token=access_token,media_id=post["id"])
+        except Exception as e:
+            post["thumbnail_url"] = None
+            continue
+        if thumb_result["success"]:
+            post["thumbnail_url"] = thumb_result["data"]
+        else:
+            post["thumbnail_url"] = None
     return jsonify({"count": len(posts), "posts": posts})
 
 @app.route("/instagram/comments/")
@@ -398,20 +409,28 @@ def carousel():
 @app.route("/instagram/auto", methods=["POST"])
 def get_thumbnail_auto():
     account_id = request.args.get("account_id")
-    media_id = request.args.get("media_id")
+    media_ids = request.args.getlist("media_id")
+    if len(media_ids) == 1 and "," in media_ids[0]:
+        media_ids = [m.strip() for m in media_ids[0].split(",") if m.strip()]
     access_token, err = get_authenticated_access_token(account_id)
-    if err: return err
-    if not media_id :
-        return jsonify({"success": False, "message": "media_id and are required"}), 400
-    try:
-        results = uploadd.get_media_thumbnail(access_token=access_token, media_id=media_id)
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Unable to fetch thumbnail: {e}"}), 500
-    if results["success"]:
-        return jsonify({"success": True, "data": results["data"]}), 200
-    else:
-        return jsonify({"success": False, "message": results["error"]}), 500
-    
+    if err:
+        return err
+    if not media_ids:
+        return jsonify({"success": False, "message": "media_id is required"}), 400
+    results_by_id = {}
+    errors_by_id = {}
+    for mid in media_ids:
+        try:
+            result = uploadd.get_media_thumbnail(access_token=access_token, media_id=mid)
+        except Exception as e:
+            errors_by_id[mid] = f"Unable to fetch thumbnail: {e}"
+            continue
+        if result["success"]:
+            results_by_id[mid] = result["data"]
+        else:
+            errors_by_id[mid] = result["error"]
+    return jsonify({ "success": len(errors_by_id) == 0, "data": results_by_id,"errors": errors_by_id if errors_by_id else None }), 200 if not errors_by_id else 207
+
 @app.route("/instagram/insight", methods=["POST"])
 def insight():
     is_story = request.args.get("is_story")
